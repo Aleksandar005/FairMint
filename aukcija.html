@@ -132,27 +132,33 @@ footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--linija);color
   <div class="karta">
     <div class="postavka-grid">
       <div>
-        <label for="fraza">Sveža fraza (neka je ukuca neko iz publike)</label>
-        <input id="fraza" placeholder="npr. „plavi tramvaj u tri ujutru”" autocomplete="off">
+        <label for="fraza">Sveža nasumičnost (svežina, ne tajna — sprečava pripremu unapred)</label>
+        <div style="display:flex;gap:8px">
+          <input id="fraza" placeholder="izvedeno iz block hasha" autocomplete="off" readonly>
+          <button id="btn-blockhash" type="button" style="white-space:nowrap">Izvedi iz block hasha</button>
+        </div>
       </div>
       <div>
-        <label for="trajanje">Trajanje otvaranja koverte</label>
+        <label for="trajanje">Koliko traje prijem ponuda</label>
         <select id="trajanje">
-          <option value="15">≈ 15 sekundi</option>
-          <option value="30" selected>≈ 30 sekundi</option>
-          <option value="60">≈ 1 minut</option>
-          <option value="120">≈ 2 minuta</option>
+          <option value="30">30 sekundi (proba)</option>
+          <option value="60" selected>1 minut</option>
+          <option value="300">5 minuta</option>
+          <option value="600">10 minuta</option>
+          <option value="1800">30 minuta</option>
+          <option value="3600">1 sat</option>
         </select>
       </div>
-      <button class="primary" id="btn-setup">Izvedi grupu, izračunaj h, postavi ugovor</button>
+      <button class="primary" id="btn-setup" disabled>Izvedi grupu, izračunaj h, postavi ugovor</button>
     </div>
     <div class="traka" id="setup-traka" style="display:none">
       <div class="tiks"></div><div class="fill"></div><div class="txt"></div>
     </div>
     <div class="setup-info" id="setup-info">
-      Diskriminanta <span class="mono">D</span> je 96-bitni demo parametar. Iz fraze se heširanjem izvodi
-      generator; javni parametar <span class="mono">h = g^(2^T)</span> se računa pošteno — T kvadriranja, jednom —
-      i upisuje u ugovor, odakle ga čitaju svi ponuđači. h je javan po dizajnu: znati ga ne pomaže nikome.
+      Diskriminanta <span class="mono">D</span> je 96-bitni demo parametar. Iz sveže nasumičnosti (block hash)
+      izvodi se generator; <span class="mono">h = g^(2^T)</span> se računa jednom i upisuje u ugovor.
+      <b>T se bira tako da otključavanje traje duže od aukcije</b> — zato otključavanje sme da počne čim ponuda
+      stigne, a nijedna koverta se ne otvori pre kraja: rad je raspoređen tokom aukcije, tajnost garantuje T.
     </div>
     <div class="deljenje" id="deljenje"></div>
     <div class="greska" id="greska-a"></div>
@@ -194,11 +200,15 @@ footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--linija);color
     </div>
     <div class="status-red" id="moj-status"></div>
   </div>
+  <div id="tajmer-box" style="display:none;margin-bottom:16px">
+    <div class="traka"><div class="fill" id="tajmer-fill" style="background:linear-gradient(90deg,#3a4a6a,#5a7ab0)"></div>
+      <div class="txt" id="tajmer-txt"></div></div>
+    <p class="napomena" id="tajmer-nap" style="margin-top:8px"></p>
+  </div>
   <div class="koverte" id="koverte"></div>
   <div class="kontrole" id="kontrole-a" style="display:none">
-    <button class="primary" id="btn-zatvori" disabled>Zatvori aukciju i otvori koverte</button>
-    <span class="napomena">Otvaranje radi ova mašina: po jedan nezavisan lanac od T kvadriranja po koverti,
-    paralelno — a ugovor svako otvaranje verifikuje i sam dešifruje.</span>
+    <span class="napomena">Otvaranje kreće automatski čim ponuda stigne; koverte se pune tokom aukcije,
+    ali se nijedna ne otključa pre kraja jer je T &gt; trajanje aukcije. Presuda ide sama kad tajmer istekne.</span>
   </div>
   <p class="napomena" id="watch-nap" style="display:none;margin-top:16px">Aukcija je zatvorena.
   Aukcionarova mašina otvara koverte; iznosi ispod stižu <b>sa lanca</b>, čim ih ugovor verifikuje i dešifruje.</p>
@@ -551,6 +561,10 @@ async function sendTx(from, to, data) {
 }
 const callView = (to, data) => rpc('eth_call', [{ to, data }, 'latest']);
 async function chainDetect() { try { return parseInt(await rpc('eth_chainId'), 16); } catch (e) { return null; } }
+async function latestBlockHash() {
+  const b = await rpc('eth_getBlockByNumber', ['latest', false]);
+  return b && b.hash ? b.hash : ('0x' + '00'.repeat(32));
+}
 const deployAuction = (T, salt, g, h) =>
   sendTx(ACCOUNTS[0], null, '0x' + BYTECODE + word(D) + word(BigInt(T)) + hex(salt) + encForm(g) + encForm(h));
 const txPlaceBid = (fromAddr, c, u, ct, name32) =>
@@ -674,6 +688,18 @@ $('#rezim-aukcionar').addEventListener('click', async () => {
     $('#btn-setup').disabled = true;
   }
 });
+$('#btn-blockhash').addEventListener('click', async () => {
+  try {
+    const bh = await latestBlockHash();
+    $('#fraza').value = bh;
+    S.freshness = bh;
+    $('#btn-setup').disabled = false;
+    $('#btn-blockhash').textContent = 'Osveži iz block hasha';
+  } catch (e) {
+    const g = $('#greska-a'); g.classList.add('show'); g.textContent = 'Ne mogu da pročitam block hash: ' + e.message;
+  }
+});
+
 $('#rezim-ponudjac').addEventListener('click', () => {
   S.role = 'ponudjac';
   $('#sek-rezim').classList.add('skriven');
@@ -683,9 +709,11 @@ $('#rezim-ponudjac').addEventListener('click', () => {
 
 // ---------------- aukcionar: postavka ----------------
 $('#btn-setup').addEventListener('click', () => {
-  const fraza = $('#fraza').value.trim() || ('bez-fraze-' + Date.now());
-  const secs = parseInt($('#trajanje').value, 10);
-  S.T = Math.max(256, Math.round(S.rate * secs));
+  const fraza = S.freshness || $('#fraza').value.trim() || ('bez-fraze-' + Date.now());
+  const aukSecs = parseInt($('#trajanje').value, 10);
+  S.aukSecs = aukSecs;
+  // T pokriva trajanje aukcije + 15% margine — otkljucavanje se zavrsi TEK posle kraja
+  S.T = Math.max(256, Math.round(S.rate * aukSecs * 1.15));
   S.salt = sha256(enc.encode('salt|' + fraza));
   S.g = hashToGroup(sha256(enc.encode('aukcija|' + fraza)));
   $('#btn-setup').disabled = true; $('#fraza').disabled = true; $('#trajanje').disabled = true;
@@ -718,6 +746,7 @@ $('#btn-setup').addEventListener('click', () => {
           &nbsp;(IP saznaš komandom <span class="mono">ipconfig</span> — npr. 192.168.x.x)<br>
           Adresa ugovora: <span class="mono" style="user-select:all">${S.contract}</span>`;
         startAuctionView(true);
+        startAuctioneerTimer();
       } catch (e) {
         const g = $('#greska-a'); g.classList.add('show');
         g.textContent = 'Postavljanje ugovora nije uspelo: ' + e.message;
@@ -754,10 +783,42 @@ $('#btn-join').addEventListener('click', async () => {
 // ---------------- zajednički prikaz aukcije ----------------
 function startAuctionView(isAuctioneer, alreadyClosed = false){
   $('#sek-aukcija').classList.remove('skriven');
-  if (isAuctioneer) $('#kontrole-a').style.display = 'flex';
+  if (isAuctioneer) {
+    $('#kontrole-a').style.display = 'flex';
+    $('#moja-karta').style.display = 'none';   // aukcionar NE licitira
+    $('#tajmer-box').style.display = 'block';
+  }
   if (alreadyClosed) onClosed();
   S.poll = setInterval(pollChain, 1300);
   pollChain();
+}
+
+// tajmer aukcije: odbrojava, i kad istekne — sam zatvara i pušta presudu
+function startAuctioneerTimer(){
+  S.aukEnd = Date.now() + S.aukSecs * 1000;
+  const fill = $('#tajmer-fill'), txt = $('#tajmer-txt'), nap = $('#tajmer-nap');
+  const tick = () => {
+    const left = Math.max(0, (S.aukEnd - Date.now()) / 1000);
+    const pct = 100 * (1 - left / S.aukSecs);
+    fill.style.width = pct + '%';
+    txt.textContent = left > 0 ? `Prijem ponuda — još ${fmtS(left)}` : 'Aukcija zatvorena';
+    const earliest = S.T / S.rate; // koliko traje otkljucavanje najranijeg bida
+    nap.innerHTML = left > 0
+      ? `Otključavanje svake koverte kreće čim stigne, ali traje ~${fmtS(earliest)} (T &gt; trajanje aukcije), ` +
+        `pa se nijedna ne otvori pre kraja. Ponuda poslata sada otvara se tek za ~${fmtS(earliest)}.`
+      : `Aukcija zatvorena — koverte se dovršavaju i ugovor presuđuje.`;
+    if (left <= 0) { clearInterval(S.timerInt); onAuctionEnd(); }
+  };
+  S.timerInt = setInterval(tick, 250); tick();
+}
+
+async function onAuctionEnd(){
+  if (S.closedSent) return; S.closedSent = true;
+  try { await txClose(S.contract); } catch (e) {}
+  onClosed();
+  // sve koverte koje su vec zavrsile kvadriranje -> odmah podnesi ugovoru;
+  // one koje jos racunaju bice podnete kad worker javi 'proved'
+  checkAllSubmitted();
 }
 
 async function pollChain(){
@@ -765,9 +826,10 @@ async function pollChain(){
   try {
     const n = await readCount(S.contract);
     for (let id = 0; id < n; id++) {
-      if (!S.rendered[id]) { S.rendered[id] = 'pending'; renderEnvelope(id); }
+      if (!S.rendered[id]) { S.rendered[id] = 'pending'; await renderEnvelope(id);
+        if (S.role === 'aukcionar') startOpening(id);   // kvadriranje kreće ODMAH
+      }
     }
-    if (S.role === 'aukcionar') $('#btn-zatvori').disabled = n < 2 || S.opening;
     if (S.role === 'ponudjac') {
       if (!S.watchClosed && await readClosed(S.contract)) { S.watchClosed = true; onClosed(); }
       if (S.watchClosed) {
@@ -848,64 +910,79 @@ async function sealMine(){
   }
 }
 
-// ---------------- aukcionar: zatvaranje + otvaranje ----------------
-$('#btn-zatvori').addEventListener('click', async () => {
-  S.opening = true;
-  $('#btn-zatvori').disabled = true;
-  $('#moja-karta').style.display = 'none';
-  try { await txClose(S.contract); } catch (e) {}
-  onClosed();
+// ---------------- aukcionar: otvaranje kreće po prijemu bida ----------------
+S.openState = {}; // id -> {done, submitted, w, pi}
+
+function startOpening(id){
+  const b = S.rendered[id];
+  if (!b || S.openState[id]) return;
+  S.openState[id] = { done: false, submitted: false };
+  const el = document.getElementById('kov-' + id);
+  el.querySelector('.traka').style.display = 'block';
+  const w = makeWorker();
+  w.onmessage = async ev => {
+    const m = ev.data;
+    const traka = el.querySelector('.traka');
+    if (m.type === 'progress') {
+      const pct = 100 * m.done / m.T;
+      traka.querySelector('.fill').style.width = pct + '%';
+      const eta = m.done ? (m.T - m.done) / (m.done / m.elapsed) : 0;
+      traka.querySelector('.txt').textContent = `kvadriranje ${pct.toFixed(0)}% · još ~${fmtS(eta)}`;
+    }
+    if (m.type === 'opened') {
+      traka.querySelector('.txt').textContent = `kvadriranje gotovo za ${fmtS(m.openSec)}`;
+      S.openState[id].w = m.w; S.openState[id].bidWei = m.bidWei;
+      el.querySelector('.status-red').textContent = 'pripremam Wesolowski dokaz…';
+    }
+    if (m.type === 'prove-progress') {
+      el.querySelector('.status-red').textContent = `pripremam Wesolowski dokaz… ${(100*m.frac).toFixed(0)}%`;
+    }
+    if (m.type === 'proved') {
+      S.openState[id].pi = m.pi; S.openState[id].done = true; w.terminate();
+      // ako je aukcija vec zatvorena -> odmah podnesi; inace cekaj kraj
+      if (S.closedSent) submitOpen(id);
+      else el.querySelector('.status-red').innerHTML =
+        `<span class="ok">otključano ✓</span> · čeka kraj aukcije da se objavi`;
+    }
+  };
+  w.postMessage({cmd:'open', id, u:b.u, T:S.T, addr:addrToBytes(b.bidder), salt:S.salt, ct:b.ct});
+}
+
+async function submitOpen(id){
+  const st = S.openState[id];
+  if (!st || !st.done || st.submitted) return;
+  st.submitted = true;
+  const el = document.getElementById('kov-' + id);
+  revealEnvelope(id, formatEther(st.bidWei));
+  el.querySelector('.status-red').textContent = 'podnosim otvaranje ugovoru…';
+  try {
+    const rec = await txOpenBid(S.contract, id, st.w, st.pi);
+    if (rec.status === '0x1') {
+      const info = await readBidFull(S.contract, id);
+      el.querySelector('.status-red').innerHTML =
+        `<span class="ok">ugovor verifikovao i dešifrovao: ${formatEther(info.amount)} ETH ✓</span> · ` +
+        `gas ${parseInt(rec.gasUsed,16).toLocaleString('sr')} · tx <span class="mono">${shortHex(rec.transactionHash)}</span>`;
+    } else {
+      el.querySelector('.status-red').textContent = 'ugovor ODBIO otvaranje (revert)';
+    }
+  } catch (e) { el.querySelector('.status-red').textContent = 'greška: ' + e.message; }
+  checkAllSubmitted();
+}
+
+async function checkAllSubmitted(){
+  if (!S.closedSent || S.finalized) return;
   const n = await readCount(S.contract);
-  let remaining = n;
+  // podnesi sve koje su gotove a jos nisu poslate
+  for (let id = 0; id < n; id++) if (S.openState[id] && S.openState[id].done && !S.openState[id].submitted) await submitOpen(id);
+  // svi otvoreni na lancu?
   for (let id = 0; id < n; id++) {
-    const b = await readBidFull(S.contract, id);  // izvor: LANAC, ne memorija
-    const el = document.getElementById('kov-' + id);
-    el.querySelector('.traka').style.display = 'block';
-    const w = makeWorker();
-    w.onmessage = async ev => {
-      const m = ev.data;
-      const traka = el.querySelector('.traka');
-      if (m.type === 'progress') {
-        const pct = 100 * m.done / m.T;
-        traka.querySelector('.fill').style.width = pct + '%';
-        const eta = m.done ? (m.T - m.done) / (m.done / m.elapsed) : 0;
-        traka.querySelector('.txt').textContent = `otvaranje ${pct.toFixed(0)}% · još ~${fmtS(eta)}`;
-      }
-      if (m.type === 'opened') {
-        traka.querySelector('.txt').textContent = `otvoreno za ${fmtS(m.openSec)}`;
-        revealEnvelope(id, formatEther(m.bidWei));
-        el.querySelector('.status-red').textContent = 'pripremam Wesolowski dokaz…';
-        b._w = m.w;
-      }
-      if (m.type === 'prove-progress') {
-        el.querySelector('.status-red').textContent = `pripremam Wesolowski dokaz… ${(100*m.frac).toFixed(0)}%`;
-      }
-      if (m.type === 'proved') {
-        el.querySelector('.status-red').textContent = 'podnosim otvaranje ugovoru…';
-        try {
-          const rec = await txOpenBid(S.contract, id, b._w, m.pi);
-          if (rec.status === '0x1') {
-            const info = await readBidFull(S.contract, id);
-            el.querySelector('.status-red').innerHTML =
-              `<span class="ok">ugovor verifikovao dokaz i dešifrovao: ${formatEther(info.amount)} ETH ✓</span> · ` +
-              `gas ${parseInt(rec.gasUsed,16).toLocaleString('sr')} · tx <span class="mono">${shortHex(rec.transactionHash)}</span>`;
-          } else {
-            el.querySelector('.status-red').textContent = 'ugovor ODBIO otvaranje (revert)';
-          }
-        } catch (e) { el.querySelector('.status-red').textContent = 'greška: ' + e.message; }
-        w.terminate();
-        if (--remaining === 0) {
-          try {
-            await txFinalize(S.contract);
-            S.finalized = true;
-            showVerdict();
-          } catch (e) {}
-        }
-      }
-    };
-    w.postMessage({cmd:'open', id, u:b.u, T:S.T, addr:addrToBytes(b.bidder), salt:S.salt, ct:b.ct});
+    const info = await readBidFull(S.contract, id);
+    if (!info.opened) return; // jos ceka neku kovertu
   }
-});
+  if (!S.finalized) {
+    try { await txFinalize(S.contract); S.finalized = true; showVerdict(); } catch (e) {}
+  }
+}
 
 function onClosed(){
   $('#moja-karta').style.display = 'none';

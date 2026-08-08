@@ -43,14 +43,17 @@ library LibBigInt {
     }
 
     function _trim(Int memory a) internal pure {
-        uint256 n = a.limbs.length;
-        while (n > 1 && a.limbs[n - 1] == 0) n--;
-        if (n != a.limbs.length) {
-            uint256[] memory t = new uint256[](n);
-            for (uint256 i = 0; i < n; i++) t[i] = a.limbs[i];
-            a.limbs = t;
+        uint256[] memory l = a.limbs;
+        uint256 n = l.length;
+        while (n > 1 && l[n - 1] == 0) n--;
+        if (n != l.length) {
+            // OPT: shrink in place — we only ever reduce the length, and _trim is
+            // only called on freshly allocated outputs, so no aliasing hazard and
+            // no reallocation + copy.
+            assembly { mstore(l, n) }
         }
-        if (isZero(a)) a.neg = false; // canonical zero
+        // after trimming, zero iff the single remaining limb is zero
+        if (n == 1 && l[0] == 0) a.neg = false; // canonical zero
     }
 
     function clone(Int memory a) internal pure returns (Int memory z) {
@@ -138,7 +141,20 @@ library LibBigInt {
     }
 
     function sub(Int memory a, Int memory b) internal pure returns (Int memory z) {
-        return add(a, negate(b));
+        // OPT: previously add(a, negate(b)) — negate clones the whole limb array.
+        // Inline the sign flip instead. (Canonical zero b: bn=true routes to the
+        // compare branch, where _ucmp handles it correctly.)
+        bool bn = !b.neg;
+        if (a.neg == bn) {
+            z.neg = a.neg;
+            z.limbs = _uadd(a.limbs, b.limbs);
+        } else {
+            int256 c = _ucmp(a.limbs, b.limbs);
+            if (c == 0) { z.limbs = new uint256[](1); return z; }
+            if (c > 0) { z.neg = a.neg; z.limbs = _usub(a.limbs, b.limbs); }
+            else { z.neg = bn; z.limbs = _usub(b.limbs, a.limbs); }
+        }
+        _trim(z);
     }
 
     // ----------------------------------------------------------------
@@ -322,8 +338,17 @@ library LibBigInt {
         for (uint256 i = 0; i < n && i < a.length; i++) r[i] = a[i];
     }
     function _clz(uint256 x) private pure returns (uint256 nn) {
+        // OPT NIVO 2: binary search (8 steps) instead of a bit loop of up to
+        // 256 iterations — _clz runs once per divmod on the divisor's top limb.
         if (x == 0) return 256;
-        while (x >> 255 == 0) { x <<= 1; nn++; }
+        if (x >> 128 == 0) { nn += 128; x <<= 128; }
+        if (x >> 192 == 0) { nn += 64; x <<= 64; }
+        if (x >> 224 == 0) { nn += 32; x <<= 32; }
+        if (x >> 240 == 0) { nn += 16; x <<= 16; }
+        if (x >> 248 == 0) { nn += 8; x <<= 8; }
+        if (x >> 252 == 0) { nn += 4; x <<= 4; }
+        if (x >> 254 == 0) { nn += 2; x <<= 2; }
+        if (x >> 255 == 0) { nn += 1; }
     }
     /// @dev (hi:lo)/d -> (q,r), requires hi < d so q fits 256 bits. Warren's "divlu"
     ///      (Hacker's Delight fig.9-3) at base 2^128: native div for digit estimates
@@ -449,8 +474,10 @@ library LibBigInt {
         Int memory old_t = fromUint(0);
         Int memory t = fromUint(1);
         while (!isZero(r)) {
-            (Int memory q, ) = divmod(old_r, r);
-            (old_r, r) = (r, sub(old_r, mul(q, r)));
+            // OPT: divmod already computed the remainder — reuse it instead of
+            // recomputing old_r - q*r with a full bignum mul + sub per iteration.
+            (Int memory q, Int memory rem) = divmod(old_r, r);
+            (old_r, r) = (r, rem);
             (old_s, s) = (s, sub(old_s, mul(q, s)));
             (old_t, t) = (t, sub(old_t, mul(q, t)));
         }
@@ -458,7 +485,368 @@ library LibBigInt {
         return (old_r, old_s, old_t);
     }
 
-    function gcd(Int memory a, Int memory b) internal pure returns (Int memory g) {
-        (g, , ) = xgcd(a, b);
+    /// @dev Naive Euclid half-extended gcd — kept ONLY as the differential-fuzz
+    ///      reference for the Lehmer engine below. Not used in production paths.
+    function xgcdHalfClassic(Int memory a, Int memory b)
+        internal pure returns (Int memory g, Int memory x)
+    {
+        Int memory old_r = clone(a);
+        Int memory r = clone(b);
+        Int memory old_s = fromUint(1);
+        Int memory s = fromUint(0);
+        while (!isZero(r)) {
+            (Int memory q, Int memory rem) = divmod(old_r, r);
+            (old_r, r) = (r, rem);
+            (old_s, s) = (s, sub(old_s, mul(q, s)));
+        }
+        if (old_r.neg) { old_r = negate(old_r); old_s = negate(old_s); }
+        return (old_r, old_s);
+    }
+
+    // ----------------------------------------------------------------
+    // OPT NIVO 2: Lehmer-ov xgcd.
+    //
+    // Naivni Euklid radi ~245 punih bignum divmod-ova na 512-bitnim ulazima,
+    // svaki ~12k gasa => ~3-6M po (x)gcd pozivu. Lehmer izvlaci gornjih 255
+    // bitova oba operanda u native reci i sertifikuje kvocijente Knuth 4.5.2
+    // uslovom (interval-test sa kofaktorima): dok god su donji (odseceni)
+    // bitovi nebitni za kvocijent, korak se izvodi u 256-bitnoj aritmetici
+    // (~50 gasa umesto ~12k). Batch koraka se akumulira u 2x2 matricu
+    // [[A,B],[C,D]] sa naizmenicnim znacima (parnost prati bool `even`;
+    // cuvamo MAGNITUDE) i primenjuje na velike brojeve odjednom.
+    //
+    // Invarijanta: (x', y') = M*(x, y) i ISTA matrica azurira Bezout par
+    // (s0', s1') = M*(s0, s1), jer je Euklidov korak linearan.
+    //
+    // Bezbednost od gresaka u zaokruzivanju: kvocijent q se primenjuje SAMO
+    // ako je q1 == q2, gde su q1/q2 gornja/donja granica pravog kvocijenta
+    // uz najgori slucaj odsecenih bitova (izvedeno iz U ∈ ((u−Bm)2^k,(u+Am)2^k),
+    // V ∈ ((v−Cm)2^k,(v+Dm)2^k) za parnu parnost, simetricno za neparnu).
+    // Ako sertifikacija ne uspe iz prve (retko: ogromni kvocijenti, u≈v),
+    // radi se JEDAN pun bignum divmod korak — korektnost nikad ne zavisi od
+    // aproksimacije.
+    // ----------------------------------------------------------------
+
+    /// @dev vrednost >> k, uzeto iz limb niza (little-endian), kao jedna rec
+    function _shrWord(uint256[] memory L, uint256 k) private pure returns (uint256 r) {
+        uint256 w = k >> 8;         // k / 256
+        uint256 o = k & 255;
+        uint256 n = L.length;
+        if (w >= n) return 0;
+        r = L[w] >> o;
+        if (o != 0 && w + 1 < n) r |= L[w + 1] << (256 - o);
+    }
+
+    /// @dev primena matrice [[±Am,∓Bm],[∓Cm,±Dm]] (znaci po parnosti) na par
+    function _applyM(
+        Int memory p, Int memory q,
+        uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool even
+    ) private pure returns (Int memory, Int memory) {
+        Int memory ap = mul(fromUint(Am), p);
+        Int memory bq = mul(fromUint(Bm), q);
+        Int memory cp = mul(fromUint(Cm), p);
+        Int memory dq = mul(fromUint(Dm), q);
+        if (even) return (sub(ap, bq), sub(dq, cp));
+        return (sub(bq, ap), sub(cp, dq));
+    }
+
+    /// @dev sertifikovana petlja nad gornjim recima; vraca akumuliranu matricu
+    function _certifiedLoop(uint256 u, uint256 v, uint256 BOUND)
+        private pure
+        returns (uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool even, bool progressed)
+    {
+        Am = 1; Dm = 1; even = true;
+        // BOUND <= 2^126: clanovi < BOUND => nijedan medjuracun ne prekoracuje
+        while (true) {
+            uint256 q1;
+            uint256 q2;
+            if (even) {
+                // A>=0, B<=0, C<=0, D>=0
+                if (v <= Cm || u < Bm) break;
+                uint256 d2 = v + Dm;
+                q1 = (u + Am) / (v - Cm);
+                q2 = (u - Bm) / d2;
+            } else {
+                // A<=0, B>=0, C>=0, D<=0
+                if (v <= Dm || u < Am) break;
+                uint256 d2 = v + Cm;
+                q1 = (u + Bm) / (v - Dm);
+                q2 = (u - Am) / d2;
+            }
+            if (q1 != q2 || q1 > BOUND) break;
+            uint256 nC = Am + q1 * Cm;
+            uint256 nD = Bm + q1 * Dm;
+            if (nC >= BOUND || nD >= BOUND) break;
+            (Am, Bm) = (Cm, Dm);
+            (Cm, Dm) = (nC, nD);
+            even = !even;
+            (u, v) = (v, u - q1 * v);
+            progressed = true;
+        }
+    }
+
+    /// @dev zavrsnica kada oba operanda stanu u jednu rec: egzaktan Euklid u
+    ///      native aritmetici, matrica se flush-uje na (s0,s1) tek kad bi
+    ///      prekoracila uint256
+    function _wordXgcdTail(uint256 u, uint256 v, Int memory s0, Int memory s1)
+        private pure returns (Int memory, Int memory)
+    {
+        uint256 Am = 1; uint256 Bm = 0; uint256 Cm = 0; uint256 Dm = 1;
+        bool even = true;
+        while (v != 0) {
+            uint256 q = u / v;
+            bool overflow =
+                (Cm != 0 && q > (type(uint256).max - Am) / Cm) ||
+                (Dm != 0 && q > (type(uint256).max - Bm) / Dm);
+            if (overflow) {
+                (s0, s1) = _applyM(s0, s1, Am, Bm, Cm, Dm, even);
+                Am = 1; Bm = 0; Cm = 0; Dm = 1; even = true;
+                continue; // isti (u,v); sa identitetom straze sigurno prolaze
+            }
+            uint256 nC = Am + q * Cm;
+            uint256 nD = Bm + q * Dm;
+            (Am, Bm) = (Cm, Dm);
+            (Cm, Dm) = (nC, nD);
+            even = !even;
+            (u, v) = (v, u - q * v);
+        }
+        (s0, s1) = _applyM(s0, s1, Am, Bm, Cm, Dm, even);
+        return (fromUint(u), s0);
+    }
+
+    /// @dev OPT NIVO 2: half-extended gcd preko Lehmer-a — vraca (g, x) sa
+    ///      a*x ≡ g (mod b), g >= 0. Isti ugovor kao xgcdHalfClassic.
+    function xgcdHalf(Int memory a, Int memory b)
+        internal pure returns (Int memory, Int memory)
+    {
+        Int memory x = abs(a);
+        Int memory y = abs(b);
+        Int memory s0 = fromUint(1);
+        Int memory s1 = fromUint(0);
+        uint256 outer;
+        while (!isZero(y)) {
+            require(++outer < 4096, "lehmer runaway"); // tripwire, nikad u praksi
+            if (cmp(x, y) < 0) {
+                (x, y) = (y, x);
+                (s0, s1) = (s1, s0);
+            }
+            if (isZero(y)) break; // a == 0 na ulazu: posle swap-a y je nula
+            uint256 sx = _sig(x.limbs);
+            if (sx == 1) {
+                (x, s0) = _wordXgcdTail(x.limbs[0], y.limbs[0], s0, s1);
+                break;
+            }
+            uint256 bl = (sx - 1) * 256 + (256 - _clz(x.limbs[sx - 1]));
+            uint256 k = bl - 255; // gornjih 255 bitova: headroom za u+Am
+            uint256 u = _shrWord(x.limbs, k);
+            uint256 v = _shrWord(y.limbs, k);
+            (uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool even, bool ok) =
+                _certifiedLoop(u, v, 1 << 126);
+            if (!ok) {
+                // aproksimacija ne moze da sertifikuje (v premalo / u≈v):
+                // jedan pun korak, korektnost ne zavisi od aproksimacije
+                (Int memory qq, Int memory rem) = divmodFast(x, y);
+                (x, y) = (y, rem);
+                (s0, s1) = (s1, sub(s0, mul(qq, s1)));
+            } else {
+                (x, y) = _applyM(x, y, Am, Bm, Cm, Dm, even);
+                require(!x.neg && !y.neg, "lehmer sign"); // teorijski nemoguce
+                (s0, s1) = _applyM(s0, s1, Am, Bm, Cm, Dm, even);
+            }
+        }
+        if (a.neg) s0 = negate(s0);
+        return (x, s0);
+    }
+
+    /// @dev OPT NIVO 2: gcd preko Lehmer engine-a (deli implementaciju sa
+    ///      xgcdHalf; kofaktorska azuriranja su sada zanemarljiv deo cene).
+    function gcd(Int memory a, Int memory b) internal pure returns (Int memory) {
+        (Int memory g, ) = xgcdHalf(a, b);
+        return g;
+    }
+
+    /// @dev Binarni (Stein) gcd — cuva se ISKLJUCIVO kao nezavisna referentna
+    ///      familija algoritama za diferencijalni fuzz Lehmer engine-a.
+    function gcdBinary(Int memory a, Int memory b) internal pure returns (Int memory) {
+        Int memory x = abs(a);
+        Int memory y = abs(b);
+        if (isZero(x)) return y;
+        if (isZero(y)) return x;
+        uint256 shift = 0;
+        while ((x.limbs[0] & 1) == 0 && (y.limbs[0] & 1) == 0) {
+            x = shr1(x); y = shr1(y); shift++;
+        }
+        while ((x.limbs[0] & 1) == 0) x = shr1(x);
+        while (true) {
+            while ((y.limbs[0] & 1) == 0) y = shr1(y);
+            if (_ucmp(x.limbs, y.limbs) > 0) { Int memory t = x; x = y; y = t; }
+            y = sub(y, x); // y >= x, both odd -> difference even and >= 0
+            if (isZero(y)) break;
+        }
+        while (shift > 0) { x = shl1(x); shift--; }
+        return x;
+    }
+
+    /// @dev (hi, lo) reci vrednosti |L| >> k
+    function _shrWord2(uint256[] memory L, uint256 k)
+        private pure returns (uint256 hi, uint256 lo)
+    {
+        lo = _shrWord(L, k);
+        hi = _shrWord(L, k + 256);
+    }
+
+    /// @dev OPT NIVO 2: floor divmod sa procenom kvocijenta iz gornjih reci.
+    ///      Kada kvocijent staje u jednu rec (tipican slucaj u reduce/normalize
+    ///      petljama i Lehmer fallback koracima), kolicnik se proceni jednim
+    ///      native _div512by256 pozivom i koriguje za najvise ±1 — dokazivo
+    ///      dovoljno uz 255-bitne aproksimacije. Rezultat je egzaktno identican
+    ///      divmod-u (ista floor semantika); za velike kvocijente pun fallback.
+    function divmodFast(Int memory a, Int memory b)
+        internal pure returns (Int memory q, Int memory r)
+    {
+        require(!isZero(b), "div by zero");
+        uint256 sa = _sig(a.limbs);
+        if (sa == 0) return (fromUint(0), fromUint(0));
+        // |a| < |b|: trunc kolicnik 0 bez ikakvog racuna
+        if (_ucmp(a.limbs, b.limbs) < 0) {
+            q = fromUint(0);
+            r = clone(a);
+            if (!isZero(r) && (a.neg != b.neg)) {
+                q = negate(fromUint(1));
+                r = add(r, b);
+            }
+            return (q, r);
+        }
+        uint256 blb;
+        {
+            uint256 sb = _sig(b.limbs);
+            uint256 bla = (sa - 1) * 256 + (256 - _clz(a.limbs[sa - 1]));
+            blb = (sb - 1) * 256 + (256 - _clz(b.limbs[sb - 1]));
+            if (bla > blb + 200) return divmod(a, b); // kvocijent ne staje u procenu
+        }
+        uint256 k = blb > 255 ? blb - 255 : 0;
+        (uint256 hi, uint256 lo) = _shrWord2(a.limbs, k);
+        (uint256 est, ) = _div512by256(hi, lo, _shrWord(b.limbs, k));
+        Int memory absB = abs(b);
+        Int memory rem = sub(abs(a), mul(fromUint(est), absB));
+        uint256 fix;
+        while (rem.neg) { require(++fix < 4, "est off"); est--; rem = add(rem, absB); }
+        while (_ucmp(rem.limbs, absB.limbs) >= 0) { require(++fix < 4, "est off"); est++; rem = sub(rem, absB); }
+        q = fromUint(est);
+        q.neg = a.neg != b.neg; // est >= 1 jer je |a| >= |b|
+        r = rem;
+        r.neg = a.neg && !isZero(rem);
+        // floor adjust — identicno divmod-u
+        if (!isZero(r) && (a.neg != b.neg)) {
+            q = sub(q, fromUint(1));
+            r = add(r, b);
+        }
+    }
+
+    /// @dev broj bitova vrednosti |a| (0 za nulu)
+    function bitLen(Int memory a) internal pure returns (uint256) {
+        uint256 n = _sig(a.limbs);
+        if (n == 0) return 0;
+        return (n - 1) * 256 + (256 - _clz(a.limbs[n - 1]));
+    }
+
+    /// @dev OPT NIVO 3: parcijalni Euklid za NUDUPL/NUCOMP. Na ulazu a > mu >= 0;
+    ///      vraca (r_{k-1}, r_k, beta_{k-1}, beta_k, parnost k) gde je
+    ///      r_i = alpha_i*a + beta_i*mu standardni niz ostataka, zaustavljen cim
+    ///      bitLen(r_k) <= stopBits. SVAKA tacka zaustavljanja daje validnu
+    ///      unimodularnu transformaciju — prag utice samo na balans velicina,
+    ///      ne na korektnost. Kvocijenti se batch-uju istim Lehmer engine-om
+    ///      (_certifiedLoop) sa dinamickim bound-om da se prag ne prebaci mnogo.
+    function _euclidStep(Int memory rP, Int memory rC, Int memory bP, Int memory bC)
+        private pure returns (Int memory, Int memory, Int memory, Int memory)
+    {
+        (Int memory q, Int memory rem) = divmodFast(rP, rC);
+        return (rC, rem, bC, sub(bP, mul(q, bC)));
+    }
+
+    function _batchFor(Int memory rP, Int memory rC, uint256 stopBits)
+        private pure
+        returns (uint256, uint256, uint256, uint256, bool, bool)
+    {
+        uint256 sx = _sig(rP.limbs);
+        uint256 k = (sx - 1) * 256 + (256 - _clz(rP.limbs[sx - 1])) - 255;
+        uint256 gap = bitLen(rC) - stopBits;
+        uint256 bound = gap >= 124 ? (1 << 126) : (uint256(1) << (gap + 2));
+        return _certifiedLoop(_shrWord(rP.limbs, k), _shrWord(rC.limbs, k), bound);
+    }
+
+    function xgcdPartial(Int memory a, Int memory mu, uint256 stopBits)
+        internal pure
+        returns (Int memory rP, Int memory rC, Int memory bP, Int memory bC, bool evenTot)
+    {
+        rP = clone(a);
+        rC = clone(mu);
+        bP = fromUint(0);
+        bC = fromUint(1);
+        evenTot = true; // parnost ukupnog broja koraka (true = parno)
+        uint256 outer;
+        while (!isZero(rC) && bitLen(rC) > stopBits) {
+            require(++outer < 4096, "partial runaway");
+            if (_sig(rP.limbs) == 1) {
+                (rP, rC, bP, bC) = _euclidStep(rP, rC, bP, bC);
+                evenTot = !evenTot;
+                continue;
+            }
+            (uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool be, bool ok) =
+                _batchFor(rP, rC, stopBits);
+            if (!ok) {
+                (rP, rC, bP, bC) = _euclidStep(rP, rC, bP, bC);
+                evenTot = !evenTot;
+            } else {
+                (rP, rC) = _applyM(rP, rC, Am, Bm, Cm, Dm, be);
+                require(!rP.neg && !rC.neg, "partial sign");
+                (bP, bC) = _applyM(bP, bC, Am, Bm, Cm, Dm, be);
+                if (!be) evenTot = !evenTot; // batch sa neparnim brojem koraka
+            }
+        }
+    }
+
+    /// @dev true iff value is exactly 1
+    function isOne(Int memory a) internal pure returns (bool) {
+        if (a.neg) return false;
+        uint256 n = a.limbs.length;
+        if (n == 0 || a.limbs[0] != 1) return false;
+        for (uint256 i = 1; i < n; i++) if (a.limbs[i] != 0) return false;
+        return true;
+    }
+
+    /// @dev OPT: multiply by 2 as a 1-bit shift (replaces mul(two, x) — no
+    ///      schoolbook pass, no _two() allocation).
+    function shl1(Int memory a) internal pure returns (Int memory z) {
+        uint256 n = a.limbs.length;
+        uint256[] memory r = new uint256[](n + 1);
+        uint256 carry = 0;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 ai = a.limbs[i];
+            unchecked { r[i] = (ai << 1) | carry; }
+            carry = ai >> 255;
+        }
+        r[n] = carry;
+        z.neg = a.neg;
+        z.limbs = r;
+        _trim(z);
+    }
+
+    /// @dev OPT: floor division by 2 as a 1-bit shift. fdiv(x, two) was going
+    ///      through the full Knuth/Warren machinery limb by limb.
+    function shr1(Int memory a) internal pure returns (Int memory z) {
+        uint256 n = a.limbs.length;
+        bool odd = (a.limbs[0] & 1) == 1;
+        uint256[] memory r = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            uint256 lo = a.limbs[i] >> 1;
+            uint256 hi = i + 1 < n ? (a.limbs[i + 1] << 255) : 0;
+            r[i] = lo | hi;
+        }
+        z.neg = a.neg;
+        z.limbs = r;
+        _trim(z);
+        // floor semantics for negative odd values: trunc-toward-zero -> floor
+        if (odd && a.neg) z = sub(z, fromUint(1));
     }
 }

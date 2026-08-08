@@ -65,7 +65,7 @@ contract SealedAuctionTest is Test {
     SealedAuction a;
 
     function setUp() public {
-        a = new SealedAuction(VD, VT, VSALT, AVec.G(), AVec.H());
+        a = new SealedAuction(VD, VT, VSALT, AVec.G(), AVec.H(), block.timestamp + 1 hours);
     }
 
     function _place() internal {
@@ -131,5 +131,33 @@ contract SealedAuctionTest is Test {
         uint256 g0 = gasleft();
         a.openBid(1, AVec.W1(), AVec.PI1());
         console2.log("openBid (verify + on-chain decrypt) gas:", g0 - gasleft());
+    }
+
+    function test_AnyoneCanCloseAfterDeadline() public {
+        vm.prank(AVec.B0); a.placeBid(AVec.U0(), AVec.CT0, AVec.NM0);
+        // pre roka stranac ne moze
+        vm.prank(AVec.B1);
+        vm.expectRevert("not yet");
+        a.closeBidding();
+        // posle roka moze bilo ko
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(AVec.B1);
+        a.closeBidding();
+        assertTrue(a.closed());
+    }
+
+    function test_OpenAndFinalizeArePermissionless() public {
+        _place();
+        // otvaranje podnosi PONUDJAC (ne aukcionar) — ugovor verifikuje, ne veruje
+        vm.prank(AVec.B2);
+        a.openBid(0, AVec.W0(), AVec.PI0());
+        vm.prank(AVec.B0);
+        a.openBid(1, AVec.W1(), AVec.PI1());
+        vm.prank(AVec.B1);
+        a.openBid(2, AVec.W2(), AVec.PI2());
+        // i finalize sme bilo ko
+        vm.prank(AVec.B2);
+        a.finalize();
+        assertEq(a.winner(), AVec.B1);
     }
 }

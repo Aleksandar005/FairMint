@@ -15,6 +15,7 @@ contract SealedAuction {
     uint256 public immutable T;
     bytes32 public immutable salt; // iz fraze publike — vezuje aukciju
     address public immutable auctioneer;
+    uint256 public immutable deadline; // posle ovog trenutka BILO KO sme da zatvori
     CG.Form public g;              // generator — javno, sa lanca ga čitaju ponuđači
     CG.Form public h;              // h = g^(2^T) — javni parametar za brzo pečaćenje
 
@@ -37,12 +38,16 @@ contract SealedAuction {
     event BidOpened(uint256 indexed id, uint256 amount);
     event Finalized(address winner, uint256 amount);
 
-    constructor(int256 _D, uint256 _T, bytes32 _salt, CG.Form memory _g, CG.Form memory _h) {
+    constructor(
+        int256 _D, uint256 _T, bytes32 _salt,
+        CG.Form memory _g, CG.Form memory _h, uint256 _deadline
+    ) {
         D = _D;
         T = _T;
         salt = _salt;
         g = _g;
         h = _h;
+        deadline = _deadline;
         auctioneer = msg.sender;
     }
 
@@ -58,8 +63,10 @@ contract SealedAuction {
         emit BidPlaced(id, msg.sender);
     }
 
+    /// @notice pre roka sme samo aukcionar; POSLE roka bilo ko — aukcija ne može
+    ///         da ostane zaglavljena ako aukcionar nestane
     function closeBidding() external {
-        require(msg.sender == auctioneer, "only auctioneer");
+        require(msg.sender == auctioneer || block.timestamp >= deadline, "not yet");
         closed = true;
     }
 

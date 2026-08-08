@@ -1,7 +1,7 @@
 [profile.default]
-solc = "/tmp/solc"
 src = "src"
 out = "out"
 libs = ["lib"]
 optimizer = true
 optimizer_runs = 200
+via_ir = true

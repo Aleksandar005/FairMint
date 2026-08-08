@@ -1,76 +1,80 @@
-# Zapečaćena aukcija nad klasnim grupama (timelock enkripcija)
+# Sealed-Bid Auction over Class Groups
 
-Radni prototip **sealed-bid aukcije bez ijednog subjekta od poverenja**:
-ponude se šifruju timelock kovertama nad klasnom grupom imaginarnog
-kvadratnog polja (grupa nepoznatog reda → nema prečice, nema trusted
-setupa), otvaranje zahteva T sekvencijalnih kvadriranja, a pametni ugovor
-verifikuje Wesolowski dokaz, **sam dešifruje iznose** i **sam proglašava
-pobednika**. Motivacija: klasne grupe su u a16z Cicada repou navedene kao
-neimplementiran pravac.
+A working prototype of a **sealed-bid auction with no trusted party**. Each bid is
+locked in a timelock envelope over the class group of an imaginary quadratic field
+(a group of unknown order, so there is no shortcut and no trusted setup). Opening an
+envelope takes T sequential squarings, and the smart contract verifies the Wesolowski
+proof, **decrypts the amounts itself**, and **picks the winner itself**. Class groups
+are listed as an unimplemented direction in a16z's Cicada repo, which is where this started.
 
-## Živi demo sa više računara (aukcionar + ponuđači)
+## Live demo across machines (auctioneer + bidders)
 
-Potrebno: [Foundry](https://getfoundry.sh) na aukcionarovoj mašini;
-ponuđačima samo browser. Svi na istoj (WiFi) mreži.
+You need [Foundry](https://getfoundry.sh) on the auctioneer machine; bidders only need a
+browser. Everyone on the same (WiFi) network.
 
-**Aukcionar:**
+**Auctioneer:**
 ```
 anvil --host 0.0.0.0
 ```
-(`--host 0.0.0.0` je obavezan da bi te mreža videla; kad Windows Firewall
-pita — dozvoli. Ako je prozor promakao:
+(`--host 0.0.0.0` is required so the network can reach you. Allow it when Windows Firewall
+asks. If the prompt was missed:
 `netsh advfirewall firewall add rule name="anvil" dir=in action=allow protocol=TCP localport=8545`)
 
-Zatim otvori `aukcija.html` → **„Vodim aukciju"** → fraza iz publike +
-trajanje → sajt izračuna h = g^(2^T), postavi ugovor i prikaže **adresu
-ugovora** i tvoj RPC (`http://TVOJA-IP:8545`; IP saznaš sa `ipconfig`).
+Then open `auction.html`, pick **Run the auction**, click **Derive from block hash**,
+choose how long bidding stays open, and deploy. The page shows the **contract address**
+and your RPC URL (`http://YOUR-IP:8545`; find the IP with `ipconfig`).
 
-**Ponuđači (mentori):** skinu `aukcija.html` iz ovog repoa i otvore ga
-lokalno → **„Dajem ponudu"** → unesu RPC i adresu ugovora sa aukcionarovog
-ekrana → ime + tajni iznos → **„Zapečati i pošalji na lanac"**. Ponuda se
-pečati lokalno (tajna ne napušta njihov računar; na lanac ide u = g^r i
-šifrat), a na ekranu gledaju uživo kako koverte stižu, kako ih aukcionarova
-mašina otvara i kako **ugovor** dešifruje iznose i bira pobednika.
+**Bidders:** download `auction.html` from this repo and open it locally, pick
+**Place a bid**, enter the RPC URL and contract address from the auctioneer screen, then
+name and secret amount. The bid is sealed locally (the secret never leaves the machine;
+only the ciphertext goes on chain), and they watch envelopes open and the contract decide.
 
-> ⚠ `aukcija.html` se otvara **lokalno** (dupli klik), ne preko GitHub
-> Pages: https stranica ne sme da priča sa http RPC-om (mixed content).
+> The page is opened **locally** (double-click), not via GitHub Pages: an https page
+> cannot talk to an http RPC (mixed content).
 
-## Šta je stvarno (ništa nije hardkodovano)
+## What is real
 
-- Puzzle nastaje iz fraze ukucane na licu mesta; svaka ponuda ima svež r.
-- Koverte, parametri (g, h, T, salt) i sva stanja žive **u ugovoru** —
-  ponuđački klijenti sve čitaju sa lanca, aukcionar otvara iz lanca.
-- Ugovor odbija nevalidne dokaze (revert), dešifruje on-chain
-  (ključ izvodljiv tek iz w = u^(2^T), vezan za adresu ponuđača i salt),
-  `finalize()` bira pobednika on-chain.
-- Kriptografija u browseru je bajt-za-bajt usklađena sa Python i Solidity
-  referencom (diferencijalno testirano); Foundry testovi: `cd solidity &&
-  forge install foundry-rs/forge-std --no-git && forge test`.
+- The puzzle is derived from a fresh block hash; every bid uses a fresh random r.
+- Envelopes, parameters (g, h, T, salt) and all state live **in the contract**. Bidder
+  clients read everything from chain; the auctioneer opens from chain.
+- Unlocking starts as each bid arrives, but T is set longer than the auction, so no
+  envelope opens before closing time.
+- The contract rejects invalid proofs (revert), decrypts on chain (the key is derivable
+  only from w = u^(2^T), bound to the bidder address and salt), and `finalize()` picks the
+  winner on chain.
+- **Nobody depends on the auctioneer.** Opening and finalizing are permissionless: any
+  bidder can click "Compute the opening on this machine" and their own browser does the
+  squarings, builds the proof and submits it. Closing is auctioneer-only until the
+  deadline, after which anyone can close. If the auctioneer machine disappears, the
+  auction still finishes (covered by an end-to-end test).
+- The browser crypto matches the Python and Solidity reference byte for byte. Foundry
+  tests: `cd solidity && forge install foundry-rs/forge-std --no-git && forge test`.
 
-## Struktura
+## Layout
 
 ```
-aukcija.html      web demo (1 fajl: UI + kriptografija + web workeri + JSON-RPC)
-python-demo/      referentna implementacija + CLI (setup/lock/unlock/verify)
-solidity/         LibClassGroup.sol, TimelockVault.sol, SealedAuction.sol,
-                  forge testovi sa vektorima, live_demo.py (CLI tok na anvil-u)
-docs/             rezime ideje, analiza tajming napada
+auction.html     web demo (one file: UI + crypto + web workers + JSON-RPC)
+python-demo/     reference implementation + CLI (setup/lock/unlock/verify)
+solidity/        LibClassGroup.sol, TimelockVault.sol, SealedAuction.sol, forge tests,
+                 live_demo.py (CLI flow on anvil)
+docs/            idea summary, timing-attack analysis
 ```
 
-## Izmerene brojke
+## Measured numbers
 
-- on-chain Wesolowski verifikacija: 19,96M → **2,62M gasa** posle
-  optimizacija (unchecked ~4,6×, Shamirovo simultano stepenovanje ~40%)
-- `openBid` (verifikacija + on-chain dešifrovanje): ~2,7M gasa
-- generisanje dokaza: checkpoint metoda ~3× brže od naivnog prolaza
+- on-chain Wesolowski verification: 19.96M -> **2.62M gas** after optimization
+  (unchecked ~4.6x, Shamir simultaneous exponentiation ~40%)
+- `openBid` (verify + on-chain decrypt): ~2.7M gas
+- proof generation: checkpoint method ~3x faster than the naive pass, and the web demo
+  splits the proof across all CPU cores (near-linear: ~5x on 4 cores, ~9x on 8)
 
-## Pošteno o ograničenjima
+## Honest limitations
 
-96-bitna diskriminanta je demo igračka (produkcija: hiljade bitova + bignum
-on-chain, realan put je SNARK omotač ili agregacija); dokaz postavke h u
-web demou je izostavljen radi trajanja (u punom protokolu postoji, Python
-demo ga generiše); anvil je lokalni demo lanac; kod je proof-of-concept
-bez revizije. Detaljna analiza napada: `docs/rezime-i-tajming-rupe.md`.
+The 96-bit discriminant is a toy (production needs thousands of bits and big-integer
+arithmetic on chain; the realistic path is a SNARK wrapper or aggregation). The proof of
+the h setup is skipped in the web demo (it exists in the full protocol; the Python demo
+generates it). anvil is a local demo chain. The code is a proof of concept without audit.
+See `docs/rezime-i-tajming-rupe.md` for the attack analysis.
 
 ---
-Studentski istraživački projekat (Petnica, 2026).
+Student research project (Petnica, 2026).

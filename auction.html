@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sealed-Bid Auction over Class Groups</title>
+<style>
+:root{
+  --mastilo:#14161d; --papir:#1d212b; --papir2:#232837; --linija:#303748;
+  --mesing:#d9a441; --mesing-t:#d9a44126; --pecat:#a83f45; --tinta:#e8e6df;
+  --mut:#8b93a7; --ok:#79a877; --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+  --serif:Georgia,'Times New Roman',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--mastilo);color:var(--tinta);font:15px/1.55 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  min-height:100vh;padding:32px 20px 60px}
+.wrap{max-width:1080px;margin:0 auto}
+button{font:inherit;cursor:pointer;border:1px solid var(--linija);background:var(--papir2);color:var(--tinta);
+  padding:9px 18px;border-radius:6px;transition:border-color .15s, background .15s}
+button:hover:not(:disabled){border-color:var(--mesing)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--mesing);outline-offset:2px}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.primary{background:var(--mesing);border-color:var(--mesing);color:#1a1508;font-weight:600}
+button.primary:hover:not(:disabled){background:#e6b552}
+input,select{font:inherit;background:var(--mastilo);border:1px solid var(--linija);color:var(--tinta);
+  padding:8px 10px;border-radius:6px;width:100%}
+.mono{font-family:var(--mono);font-size:12.5px}
+header{margin-bottom:30px}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(28px,4.5vw,40px)}
+h1 em{color:var(--mesing);font-style:italic}
+.podnaslov{color:var(--mut);margin-top:6px;max-width:660px}
+.chain-badge{display:inline-block;margin-top:12px;padding:4px 12px;border:1px solid var(--linija);border-radius:20px;
+  font-size:12px;color:var(--mut)}
+.chain-badge.on{border-color:var(--ok);color:var(--ok)}
+section{margin-top:30px;transition:opacity .3s}
+section.skriven{display:none}
+.sek-naslov{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin-bottom:14px;
+  display:flex;align-items:center;gap:12px}
+.sek-naslov::after{content:"";flex:1;height:1px;background:var(--linija)}
+.karta{background:var(--papir);border:1px solid var(--linija);border-radius:10px;padding:20px}
+.rezimi{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:680px){.rezimi{grid-template-columns:1fr}}
+.rezim{background:var(--papir);border:1px solid var(--linija);border-radius:10px;padding:22px;cursor:pointer;
+  transition:border-color .2s}
+.rezim:hover{border-color:var(--mesing)}
+.rezim h2{font-family:var(--serif);font-weight:400;font-size:22px;margin-bottom:8px}
+.rezim p{color:var(--mut);font-size:13.5px}
+.postavka-grid{display:grid;grid-template-columns:1fr 200px auto;gap:14px;align-items:end}
+.join-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:end}
+@media(max-width:720px){.postavka-grid,.join-grid{grid-template-columns:1fr}}
+label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px}
+.setup-info{margin-top:14px;color:var(--mut);font-size:13px;line-height:1.7}
+.setup-info .mono{color:var(--tinta)}
+.deljenje{margin-top:14px;padding:14px;border:1px dashed var(--mesing);border-radius:8px;font-size:13.5px;line-height:1.8;display:none}
+.deljenje.show{display:block}
+.traka{position:relative;height:26px;background:var(--mastilo);border:1px solid var(--linija);border-radius:5px;
+  overflow:hidden;margin-top:12px}
+.traka .fill{position:absolute;inset:0;width:0%;background:linear-gradient(90deg,var(--mesing-t),var(--mesing));
+  transition:width .25s linear}
+.traka .tiks{position:absolute;inset:0;
+  background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),var(--linija) calc(10% - 1px) 10%)}
+.traka .txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11.5px;color:var(--tinta);text-shadow:0 1px 2px #0008}
+.moja-forma{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+@media(max-width:680px){.moja-forma{grid-template-columns:1fr}}
+.koverte{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:16px}
+.koverta{background:var(--papir);border:1px solid #4a3a3c;border-radius:10px;padding:18px;position:relative}
+.koverta.winner{border-color:var(--mesing);box-shadow:0 0 0 1px var(--mesing), 0 8px 30px -12px var(--mesing-t)}
+.koverta h3{font-family:var(--serif);font-weight:400;font-size:18px;margin-bottom:8px;padding-right:44px}
+.moja-oznaka{display:inline-block;margin-left:8px;font-size:10px;letter-spacing:.1em;color:var(--mesing);
+  border:1px solid var(--mesing);border-radius:4px;padding:1px 6px;vertical-align:middle}
+.pecat{position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#c4555c,var(--pecat) 70%);display:flex;align-items:center;justify-content:center;
+  font-size:13px;box-shadow:0 2px 8px #0006;color:#f5e9e9}
+.cifra-red{font-size:12px;color:var(--mut);word-break:break-all;line-height:1.7}
+.cifra-red b{color:var(--tinta);font-weight:500}
+.otkriveno{display:none;margin-top:10px;text-align:center}
+.koverta.opened .otkriveno{display:block}
+.koverta.opened .pecat{background:radial-gradient(circle at 35% 30%,#8fbc8f,#5a8a5a 70%)}
+.otkriveno .iznos{font-family:var(--serif);font-size:38px;line-height:1.1}
+.koverta.winner .otkriveno .iznos{color:var(--mesing)}
+.otkriveno .val{font-size:12px;color:var(--mut);letter-spacing:.1em}
+@media(prefers-reduced-motion:no-preference){
+  .koverta.opened .otkriveno .iznos{animation:stamp .45s cubic-bezier(.2,1.6,.4,1)}
+  @keyframes stamp{0%{transform:scale(1.7);opacity:0}100%{transform:scale(1);opacity:1}}
+}
+.status-red{margin-top:10px;font-size:12px;color:var(--mut);font-family:var(--mono);line-height:1.7}
+.status-red .ok{color:var(--ok)}
+.kontrole{margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.napomena{font-size:12.5px;color:var(--mut)}
+.pobednik-baner{display:none;margin-top:22px;padding:22px;border:1px solid var(--mesing);border-radius:10px;
+  background:linear-gradient(180deg,var(--mesing-t),transparent);text-align:center}
+.pobednik-baner.show{display:block}
+.pobednik-baner .ko{font-family:var(--serif);font-size:30px}
+.pobednik-baner .ko em{color:var(--mesing);font-style:normal}
+.pobednik-baner .presuda{margin-top:10px;font-size:13px;color:var(--mut);font-family:var(--mono)}
+.pobednik-baner .presuda .ok{color:var(--ok)}
+.greska{margin-top:14px;padding:14px;border:1px solid #c4555c;border-radius:8px;color:#e8b7ba;font-size:13.5px;display:none}
+.greska.show{display:block}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--linija);color:var(--mut);font-size:12.5px;max-width:860px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Sealed-bid auction <em>over class groups</em></h1>
+  <p class="podnaslov">Each bid is locked in a timelock envelope. Nobody can read it until someone performs
+  T sequential squarings in a group whose order no one knows. The contract is the only source of truth:
+  it checks every opening, decrypts the amounts itself, and picks the winner itself.</p>
+  <span class="chain-badge" id="badge">⛓ …</span>
+</header>
+
+<section id="sek-rezim">
+  <div class="sek-naslov">Choose your role</div>
+  <div class="rezimi">
+    <div class="rezim" id="rezim-aukcionar" role="button" tabindex="0">
+      <h2>Run the auction</h2>
+      <p>The chain runs on this machine. Derive the parameters, deploy the contract, collect bids
+      from other machines on the network, then let the envelopes open and the contract decide.</p>
+    </div>
+    <div class="rezim" id="rezim-ponudjac" role="button" tabindex="0">
+      <h2>Place a bid</h2>
+      <p>Connect to the auctioneer's chain (address shown on their screen), seal your secret bid,
+      and watch the envelopes open and the contract choose a winner in real time.</p>
+    </div>
+  </div>
+</section>
+
+<section id="sek-postavka" class="skriven">
+  <div class="sek-naslov">Setup, done once, trustless</div>
+  <div class="karta">
+    <div class="postavka-grid">
+      <div>
+        <label for="fraza">Fresh randomness (freshness, not a secret; it stops anyone precomputing)</label>
+        <div style="display:flex;gap:8px">
+          <input id="fraza" placeholder="derived from a block hash" autocomplete="off" readonly>
+          <button id="btn-blockhash" type="button" style="white-space:nowrap">Derive from block hash</button>
+        </div>
+      </div>
+      <div>
+        <label for="trajanje">How long bidding stays open</label>
+        <select id="trajanje">
+          <option value="30">30 seconds (test run)</option>
+          <option value="60" selected>1 minute</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
+          <option value="1800">30 minutes</option>
+          <option value="3600">1 hour</option>
+        </select>
+      </div>
+      <button class="primary" id="btn-setup" disabled>Derive the group, compute h, deploy the contract</button>
+    </div>
+    <div class="traka" id="setup-traka" style="display:none">
+      <div class="tiks"></div><div class="fill"></div><div class="txt"></div>
+    </div>
+    <div class="setup-info" id="setup-info">
+      The fresh randomness (a block hash) seeds the generator, and
+      <span class="mono">h = g^(2^T)</span> is computed once and stored in the contract.
+      <b>T is chosen so that unlocking takes longer than the auction itself.</b> That is why unlocking can start the
+      moment a bid arrives, yet no envelope opens before closing time: the work is spread across the auction, and T keeps things secret.
+    </div>
+    <div class="deljenje" id="deljenje"></div>
+    <div class="greska" id="greska-a"></div>
+  </div>
+</section>
+
+<section id="sek-join" class="skriven">
+  <div class="sek-naslov">Connect to an auction</div>
+  <div class="karta">
+    <div class="join-grid">
+      <div>
+        <label for="join-rpc">Chain address (from the auctioneer screen)</label>
+        <input id="join-rpc" placeholder="http://192.168.1.42:8545" autocomplete="off">
+      </div>
+      <div>
+        <label for="join-contract">Contract address</label>
+        <input id="join-contract" placeholder="0x…" autocomplete="off" class="mono">
+      </div>
+      <button class="primary" id="btn-join">Connect</button>
+    </div>
+    <div class="setup-info" id="join-info"></div>
+    <div class="greska" id="greska-b"></div>
+  </div>
+</section>
+
+<section id="sek-aukcija" class="skriven">
+  <div class="sek-naslov">Envelopes on the chain</div>
+  <div class="karta" id="moja-karta">
+    <div class="moja-forma">
+      <div>
+        <label for="moje-ime">Your name</label>
+        <input id="moje-ime" placeholder="npr. Ana" autocomplete="off" maxlength="30">
+      </div>
+      <div>
+        <label for="moj-iznos">Secret amount (ETH), typed like a password</label>
+        <input id="moj-iznos" type="password" inputmode="decimal" placeholder="npr. 7.5">
+      </div>
+      <button class="primary" id="btn-pecati">Seal and send to the chain</button>
+    </div>
+    <div class="status-red" id="moj-status"></div>
+  </div>
+  <div id="tajmer-box" style="display:none;margin-bottom:16px">
+    <div class="traka"><div class="fill" id="tajmer-fill" style="background:linear-gradient(90deg,#3a4a6a,#5a7ab0)"></div>
+      <div class="txt" id="tajmer-txt"></div></div>
+    <p class="napomena" id="tajmer-nap" style="margin-top:8px"></p>
+  </div>
+  <div class="koverte" id="koverte"></div>
+  <div class="kontrole" id="kontrole-a" style="display:none">
+    <span class="napomena">Unlocking starts automatically as each bid arrives. Envelopes fill up during the auction,
+    but none of them opens before closing time, because T is longer than the auction. The verdict runs on its own once the timer ends.</span>
+  </div>
+  <div id="watch-nap" style="display:none;margin-top:16px">
+    <p class="napomena">Bidding is closed.
+    The auctioneer machine is opening the envelopes. The amounts below come <b>from the chain</b> as soon as the contract verifies and decrypts them.</p>
+    <div class="karta" style="margin-top:12px">
+      <button class="primary" id="btn-finish" style="display:none">Auctioneer offline? Finish the auction from this machine</button>
+      <p class="napomena" style="margin-top:10px">Opening is permissionless by design. The contract will not take anyone's
+      word for an amount, not even the bidder's own: it accepts only w = u^(2^T) with a valid proof, and producing those takes
+      the actual T squarings. Knowing your own bid does not shortcut that work. So if the auctioneer machine disappears,
+      any participant can do the squarings for every envelope right here and the contract still verifies, decrypts and
+      picks the winner. Nobody depends on anyone.</p>
+    </div>
+  </div>
+  <div class="pobednik-baner" id="baner"></div>
+</section>
+
+<footer>
+  All the cryptography on this page is real and runs in your browser. Envelopes, openings
+  and the verdict live only inside the <span class="mono">SealedAuction.sol</span> contract.
+  Opening and finalizing are permissionless, so the auction finishes even if the auctioneer
+  goes offline.
+</footer>
+
+</div>
+
+<script id="cg">
+// cg.js - klasna grupa + timelock kripto jezgro (BigInt, bez biblioteka)
+// Ovaj isti kod se izvršava u glavnoj niti i u web workerima.
+"use strict";
+
+const D = -64770550419156998147359728223n; // 96-bitna DEMO diskriminanta
+
+// ---------- celobrojna aritmetika (floor semantika kao u Python/Solidity) ----------
+function fdiv(a, b) { let q = a / b; if (a % b !== 0n && ((a < 0n) !== (b < 0n))) q -= 1n; return q; }
+function fmod(a, b) { return a - fdiv(a, b) * b; }
+function bgcd(a, b) { a = a < 0n ? -a : a; b = b < 0n ? -b : b; while (b) { [a, b] = [b, a % b]; } return a; }
+function xgcd(a, b) {
+  let [r0, r1] = [a, b], [x0, x1] = [1n, 0n], [y0, y1] = [0n, 1n];
+  while (r1 !== 0n) {
+    const q = r0 / r1;
+    [r0, r1] = [r1, r0 - q * r1];
+    [x0, x1] = [x1, x0 - q * x1];
+    [y0, y1] = [y1, y0 - q * y1];
+  }
+  if (r0 < 0n) { r0 = -r0; x0 = -x0; y0 = -y0; }
+  return [r0, x0, y0];
+}
+function solveMod(a, b, m) {
+  const [g, x0] = xgcd(a, m);
+  if (b % g !== 0n) throw new Error("no solution");
+  const cap = m / g;
+  return [fmod(x0 * (b / g), cap), cap];
+}
+function modpow(b, e, m) { b %= m; if (b < 0n) b += m; let r = 1n % m; while (e > 0n) { if (e & 1n) r = (r * b) % m; b = (b * b) % m; e >>= 1n; } return r; }
+
+// ---------- forme ----------
+function normalize(f) {
+  let [a, b, c] = f;
+  if (-a < b && b <= a) return [a, b, c];
+  const r = fdiv(a - b, 2n * a);
+  return [a, b + 2n * r * a, a * r * r + b * r + c];
+}
+function reduceF(f) {
+  let [a, b, c] = normalize(f);
+  while (a > c || (a === c && b < 0n)) {
+    const s = fdiv(c + b, 2n * c);
+    [a, b, c] = [c, -b + 2n * s * c, c * s * s - b * s + a];
+  }
+  return normalize([a, b, c]);
+}
+function identity() { return [1n, 1n, (1n - D) / 4n]; }
+function eqF(x, y) { return x[0] === y[0] && x[1] === y[1] && x[2] === y[2]; }
+function compose(f1, f2) {
+  const [a1, b1, c1] = f1, [a2, b2] = f2;
+  const g = (b1 + b2) / 2n, h = (b2 - b1) / 2n;
+  const w = bgcd(bgcd(a1, a2), g);
+  const s = a1 / w, t = a2 / w, u = g / w;
+  const [k0, cap] = solveMod(t * u, h * u + s * c1, s * t);
+  const [n] = solveMod(t * cap, h - t * k0, s);
+  const k = fmod(k0 + cap * n, s * t);
+  const l = (t * k - h) / s;
+  const m = (t * u * k - h * u - s * c1) / (s * t);
+  return reduceF([s * t, w * u - (k * t + l * s), k * l - w * m]);
+}
+function powF(f, e) {
+  let r = identity(), b = f;
+  while (e > 0n) { if (e & 1n) r = compose(r, b); b = compose(b, b); e >>= 1n; }
+  return r;
+}
+
+// ---------- SHA-256 (čist JS, sinhron - radi svuda uklj. workere i file://) ----------
+const SHA_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+function sha256(bytes) {
+  const len = bytes.length;
+  const bitLen = len * 8;
+  const padded = new Uint8Array(((len + 8) >> 6 << 6) + 64);
+  padded.set(bytes); padded[len] = 0x80;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(padded.length - 4, bitLen >>> 0);
+  dv.setUint32(padded.length - 8, Math.floor(bitLen / 0x100000000));
+  const H = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  const w = new Uint32Array(64);
+  const rr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + 4 * i);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rr(w[i - 15], 7) ^ rr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rr(w[i - 2], 17) ^ rr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rr(e, 6) ^ rr(e, 11) ^ rr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + SHA_K[i] + w[i]) >>> 0;
+      const S0 = rr(a, 2) ^ rr(a, 13) ^ rr(a, 22);
+      const mj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+  }
+  const out = new Uint8Array(32);
+  const odv = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) odv.setUint32(4 * i, H[i]);
+  return out;
+}
+
+// ---------- bajt pomoćnici ----------
+const enc = new TextEncoder();
+function concatB(...arrs) {
+  const n = arrs.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(n); let o = 0;
+  for (const a of arrs) { out.set(a, o); o += a.length; }
+  return out;
+}
+function i256(x) { // (x mod 2^256) big-endian 32B - isto kao Python i256
+  let v = ((x % (1n << 256n)) + (1n << 256n)) % (1n << 256n);
+  const out = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  return out;
+}
+function u64be(n) { const o = new Uint8Array(8); let v = BigInt(n); for (let i = 7; i >= 0; i--) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; }
+function bytesToBig(b) { let v = 0n; for (const x of b) v = (v << 8n) | BigInt(x); return v; }
+function hex(b) { return Array.from(b, x => x.toString(16).padStart(2, "0")).join(""); }
+
+// ---------- prostost i izvođenja ----------
+const MR_BASES = [2n, 3n, 5n, 7n, 11n, 13n, 17n, 19n, 23n, 29n, 31n, 37n];
+function mrPrime(n) {
+  if (n < 2n) return false;
+  for (const p of MR_BASES) { if (n % p === 0n) return n === p; }
+  let d = n - 1n, s = 0n;
+  while ((d & 1n) === 0n) { d >>= 1n; s++; }
+  outer: for (const a of MR_BASES) {
+    let x = modpow(a, d, n);
+    if (x === 1n || x === n - 1n) continue;
+    for (let j = 0n; j < s - 1n; j++) { x = (x * x) % n; if (x === n - 1n) continue outer; }
+    return false;
+  }
+  return true;
+}
+function tonelli(n, p) {
+  n = fmod(n, p);
+  if (n === 0n) return 0n;
+  if (modpow(n, (p - 1n) / 2n, p) !== 1n) return null;
+  if (p % 4n === 3n) return modpow(n, (p + 1n) / 4n, p);
+  let q = p - 1n, s = 0n;
+  while ((q & 1n) === 0n) { q >>= 1n; s++; }
+  let z = 2n;
+  while (modpow(z, (p - 1n) / 2n, p) !== p - 1n) z++;
+  let m = s, c = modpow(z, q, p), t = modpow(n, q, p), r = modpow(n, (q + 1n) / 2n, p);
+  while (t !== 1n) {
+    let t2 = t, i = 0n;
+    while (t2 !== 1n) { t2 = (t2 * t2) % p; i++; }
+    const b = modpow(c, 1n << (m - i - 1n), p);
+    m = i; c = (b * b) % p; t = (t * c) % p; r = (r * b) % p;
+  }
+  return r;
+}
+function hashToGroup(seedBytes) { // "nothing up my sleeve" element - bez tajnog r
+  for (let ctr = 0; ; ctr++) {
+    const dg = sha256(concatB(seedBytes, u64be(ctr)));
+    const q = bytesToBig(dg.subarray(0, 6)) | 1n;
+    if (q < 3n || !mrPrime(q)) continue;
+    if (modpow(fmod(D, q), (q - 1n) / 2n, q) !== 1n) continue;
+    let b = tonelli(fmod(D, q), q);
+    if (b === null) continue;
+    if (b % 2n === 0n) b = q - b;
+    return reduceF([q, b, (b * b - D) / (4n * q)]);
+  }
+}
+function hashToPrime80(seedBytes) {
+  for (let ctr = 0; ; ctr++) {
+    const c32 = new Uint8Array(32); c32.set(u64be(ctr), 24); // 32B counter kao u Python/Solidity
+    let cand = bytesToBig(sha256(concatB(seedBytes, c32)).subarray(0, 10));
+    cand |= (1n << 79n) | 1n;
+    if (mrPrime(cand)) return cand;
+  }
+}
+function fsSeed(u, w, T) {
+  return sha256(concatB(i256(u[0]), i256(u[1]), i256(u[2]),
+                        i256(w[0]), i256(w[1]), i256(w[2]),
+                        i256(BigInt(T)), i256(D)));
+}
+
+// ---------- timelock: dokaz iz kontrolnih tačaka + verifikacija ----------
+const CP_EVERY = 64;
+function quotientBits(T, l) {
+  const bits = new Uint8Array(T);
+  let r = 1n;
+  for (let i = 1; i <= T; i++) {
+    const two = 2n * r;
+    const b = two / l; r = two % l;
+    bits[T - i] = Number(b);
+  }
+  return bits;
+}
+function proveFromCheckpoints(u, cps, bits, T) {
+  let acc = identity();
+  for (let t = CP_EVERY - 1; t >= 0; t--) {
+    acc = compose(acc, acc);
+    for (let m = 0; m < cps.length; m++) {
+      const j = m * CP_EVERY + t;
+      if (j < T && bits[j]) acc = compose(acc, cps[m]);
+    }
+  }
+  return acc;
+}
+function verifyPoE(u, w, pi, T) {
+  const l = hashToPrime80(fsSeed(u, w, T));
+  const r = modpow(2n, BigInt(T), l);
+  return eqF(compose(powF(pi, l), powF(u, r)), reduceF(w));
+}
+
+// ---------- šifrovanje ponude (chain-kompatibilno: 32B, abi.encodePacked semantika) ----------
+// key = sha256( wa‖wb‖wc (i256) ‖ bidder(20B) ‖ salt(32B) )
+// ct  = uint256(amountWei) XOR sha256( key ‖ uint64(0) )
+function bidKey32(w, addrBytes, salt) {
+  return sha256(concatB(i256(w[0]), i256(w[1]), i256(w[2]), addrBytes, salt));
+}
+function encryptBid32(hr, addrBytes, salt, amountWei) {
+  const pad = sha256(concatB(bidKey32(hr, addrBytes, salt), u64be(0)));
+  return xorBytes(i256(amountWei), pad);
+}
+function decryptBid32(w, addrBytes, salt, ct32) {
+  const pad = sha256(concatB(bidKey32(w, addrBytes, salt), u64be(0)));
+  return bytesToBig(xorBytes(ct32, pad));
+}
+function addrToBytes(a) {
+  const h = a.replace(/^0x/, "").toLowerCase();
+  const out = new Uint8Array(20);
+  for (let i = 0; i < 20; i++) out[i] = parseInt(h.substr(2 * i, 2), 16);
+  return out;
+}
+function parseEther(s) { // "7.5" -> wei BigInt
+  const [w, f = ""] = s.split(".");
+  return BigInt(w || "0") * 10n ** 18n + BigInt((f + "0".repeat(18)).slice(0, 18));
+}
+function formatEther(x) {
+  const w = x / 10n ** 18n, f = (x % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+  return f ? `${w}.${f}` : `${w}`;
+}
+
+// ---------- staro tekstualno šifrovanje (lokalni demo bez lanca) ----------
+function keystream(keyBytes, n) {
+  const parts = [];
+  for (let c = 0; parts.length * 32 < n; c++) parts.push(sha256(concatB(keyBytes, u64be(c))));
+  return concatB(...parts).subarray(0, n);
+}
+function serializeForm(f) { return enc.encode(`(${f[0]}, ${f[1]}, ${f[2]})`); }
+function bidKey(hr, name, auctionId) {
+  return sha256(concatB(enc.encode("bid-key|"), serializeForm(hr),
+                        enc.encode("|" + name + "|" + auctionId)));
+}
+function xorBytes(a, b) { const o = new Uint8Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] ^ b[i]; return o; }
+function encryptBid(hr, name, auctionId, amountStr) {
+  const pt = enc.encode(amountStr.padEnd(12, " ").slice(0, 12));
+  return xorBytes(pt, keystream(bidKey(hr, name, auctionId), pt.length));
+}
+function decryptBid(w, name, auctionId, ctBytes) {
+  const pt = xorBytes(ctBytes, keystream(bidKey(w, name, auctionId), ctBytes.length));
+  return new TextDecoder().decode(pt).trim();
+}
+function randBig(bits) {
+  const b = new Uint8Array(Math.ceil(bits / 8));
+  (globalThis.crypto || require("crypto").webcrypto).getRandomValues(b);
+  return bytesToBig(b) | (1n << BigInt(bits - 1));
+}
+
+if (typeof module !== "undefined") module.exports = {
+  D, fdiv, fmod, xgcd, compose, reduceF, powF, identity, eqF, sha256, hex,
+  mrPrime, tonelli, hashToGroup, hashToPrime80, fsSeed, quotientBits,
+  proveFromCheckpoints, verifyPoE, encryptBid, decryptBid, randBig,
+  bidKey32, encryptBid32, decryptBid32, addrToBytes, parseEther, formatEther,
+  concatB, i256, u64be, enc, CP_EVERY, serializeForm
+};
+
+</script>
+
+<script id="chain">
+"use strict";
+let RPC = 'http://127.0.0.1:8545';
+const ACCOUNTS = [
+  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+  '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65',
+  '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
+  '0x976EA74026E726554dB657fA54763abd0C3a0aa9',
+  '0x14dC79964da2C08b23698B3D3cc7Ca32193d9955',
+  '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f',
+  '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'
+];
+const SEL = { placeBid:'0xbb154690', close:'0x5df5e639', openBid:'0xf0d5424d',
+  finalize:'0x4bb278f3', bidCount:'0xb40a5627', bids:'0x4423c5f1',
+  winner:'0xdfbf53ae', winningBid:'0x8cf80438', g:'0xe2179b8e', h:'0xb8c9d365',
+  T:'0x2bc80f3a', salt:'0xbfa0b133', closed:'0x597e1fb5', finalized:'0xb3f05b97', deadline:'0x29dcb0cf' };
+const TOPIC_BID_PLACED = '0x5445de3f4fe13efb115ec05c57e09cc0e277801d0cd2ae780457ebcd8688c391';
+const BYTECODE = '6101206040523461011b576040516115c03881900390601f8201601f19168301906001600160401b0382118483101761011f57829160405283398101906101408183031261011b57806040809251936020830151828401519061012061007561006b8560608901610133565b9460c08801610133565b9501519660805260a05260c05280515f5560208101516001550151600255805160035560208101516004550151600555610100523360e05260405161144a90816101768239608051818181610a2a01528181610b8a0152610dc0015260a0518181816109b801528181610b530152610d9a015260c0518181816101cf01526103f3015260e0518181816106b001526106f201526101005181818161076801526109f20152f35b5f80fd5b634e487b7160e01b5f52604160045260245ffd5b919082606091031261011b57604051606081016001600160401b0381118282101761011f5760405260408082948051845260208101516020850152015191015256fe6080806040526004361015610012575f80fd5b5f3560e01c9081630f529ba214610a155750806329dcb0cf146109db5780632bc80f3a146109a15780634423c5f11461090e5780634bb278f3146107b1578063597e1fb51461078f5780635df5e639146106df5780635ec2c7bf1461069b57806386046254146106335780638cf8043814610616578063b3f05b97146105f1578063b40a5627146105d4578063b8c9d365146105a3578063bb15469014610416578063bfa0b133146103dc578063dfbf53ae146103b4578063e0eb28db1461037e578063e2179b8e1461034e5763f0d5424d146100ed575f80fd5b3461034a5760e036600319011261034a57600435606036602319011261034a57606036608319011261034a5761012281610a4d565b5060ff6007541615610318576006810190815460ff81166102e25761014682610abb565b60405161015281610a7d565b60243580825261019660443593846020850152606435938460408201526040519161017c83610a7d565b608435835260a435602084015260c4356040840152610b43565b156102ad576020925f9260048701549060405192868401948552604084015260608301526001600160601b03199060601b1660808201527f000000000000000000000000000000000000000000000000000000000000000060948201526094815261020260b482610a99565b604051918291518091835e8101838152039060025afa156102a25760205f805160405183810191825282604082015260288152610240604882610a99565b604051918291518091835e8101838152039060025afa156102a2577fa768218526cdf9d2df0149fa77b4969de8c48e59ede90f39a0053beadb349fe39260016007926020945f51600382015418948591015560ff1916179055604051908152a2005b6040513d5f823e3d90fd5b60405162461bcd60e51b815260206004820152600d60248201526c34b73b30b634b210383937b7b360991b6044820152606490fd5b60405162461bcd60e51b815260206004820152600e60248201526d185b1c9958591e481bdc195b995960921b6044820152606490fd5b60405162461bcd60e51b815260206004820152600a6024820152691b9bdd0818db1bdcd95960b21b6044820152606490fd5b5f80fd5b3461034a575f36600319011261034a575f5460015460025460408051938452602084019290925290820152606090f35b3461034a5760c036600319011261034a5760206103ac61039d36610ae3565b6103a636610b13565b90610d57565b604051908152f35b3461034a575f36600319011261034a576009546040516001600160a01b039091168152602090f35b3461034a575f36600319011261034a5760206040517f00000000000000000000000000000000000000000000000000000000000000008152f35b3461034a57366003190160a0811261034a5760601361034a5760ff6007541661056d576006546040519060c0820182811067ffffffffffffffff8211176105595760405261046336610ae3565b8252602082019160643583526040810190338252606081016084358152608082015f815260a08301915f83526801000000000000000086101561055957600186016006556104b086610a4d565b95909561054657602097604060079651805189558a81015160018a015501516002880155516003870155600486019060018060a01b039051166001600160601b0360a01b825416179055516005850155600684019051151560ff80198354169116179055519101556040519033817f5445de3f4fe13efb115ec05c57e09cc0e277801d0cd2ae780457ebcd8688c3915f80a38152f35b634e487b7160e01b5f525f60045260245ffd5b634e487b7160e01b5f52604160045260245ffd5b60405162461bcd60e51b815260206004820152600e60248201526d189a59191a5b99c818db1bdcd95960921b6044820152606490fd5b3461034a575f36600319011261034a5760035460045460055460408051938452602084019290925290820152606090f35b3461034a575f36600319011261034a576020600654604051908152f35b3461034a575f36600319011261034a57602060ff60075460081c166040519015158152f35b3461034a575f36600319011261034a576020600854604051908152f35b3461034a5761012036600319011261034a5761064e36610ae3565b61065736610b13565b60603660c319011261034a57602091610691916040519161067783610a7d565b60c435835260e43585840152610104356040840152610b43565b6040519015158152f35b3461034a575f36600319011261034a576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b3461034a575f36600319011261034a57337f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316148015610765575b15610736576007805460ff19166001179055005b60405162461bcd60e51b81526020600482015260076024820152661b9bdd081e595d60ca1b6044820152606490fd5b507f0000000000000000000000000000000000000000000000000000000000000000421015610722565b3461034a575f36600319011261034a57602060ff600754166040519015158152f35b3461034a575f36600319011261034a5760075460ff811680610900575b156108d3576006545f918291825b818110610851577f66b6851664a82efe6b871e434faba2b11421d2dad65eb71a344ae76cca8a2b86604086610821876101008861ff0019161760075582600855610a4d565b50600460018060a01b039101541690816001600160601b0360a01b600954161760095582519182526020820152a1005b60ff600661085e83610a4d565b500154161561089d5784600761087383610a4d565b50015411610884575b6001016107dc565b92509250600761089383610a4d565b500154928261087c565b60405162461bcd60e51b815260206004820152600e60248201526d189a59081b9bdd081bdc195b995960921b6044820152606490fd5b60405162461bcd60e51b8152602060048201526005602482015264737461746560d81b6044820152606490fd5b5060ff8160081c16156107ce565b3461034a57602036600319011261034a5760043560065481101561034a5761093861010091610a4d565b5061094281610abb565b9060038101549060018060a01b03600482015416600582015490600760ff6006850154169301549360408051968051885260208101516020890152015160408701526060860152608085015260a0840152151560c083015260e0820152f35b3461034a575f36600319011261034a5760206040517f00000000000000000000000000000000000000000000000000000000000000008152f35b3461034a575f36600319011261034a5760206040517f00000000000000000000000000000000000000000000000000000000000000008152f35b3461034a575f36600319011261034a576020907f00000000000000000000000000000000000000000000000000000000000000008152f35b600654811015610a695760065f5260205f209060031b01905f90565b634e487b7160e01b5f52603260045260245ffd5b6060810190811067ffffffffffffffff82111761055957604052565b90601f8019910116810190811067ffffffffffffffff82111761055957604052565b90604051610ac881610a7d565b60406002829480548452600181015460208501520154910152565b606090600319011261034a5760405190610afc82610a7d565b600435825260243560208301526044356040830152565b606090606319011261034a5760405190610b2c82610a7d565b6064358252608435602083015260a4356040830152565b91610b4e8284610d57565b6002917f00000000000000000000000000000000000000000000000000000000000000008215610d35578083806001069506905b610d0d5750507f000000000000000000000000000000000000000000000000000000000000000090610bb2610e95565b50610bbd8682611153565b91610bc6610e95565b505f816001039112600182128116906001831390151617610cf9576004900560405190610bf282610a7d565b6001808352602083015260408201529584841115610cef578394939291905b6001955b8060011c871115610ce35750855b610c6e57505050505050610c3690610eb3565b81518151149182610c5b575b82610c4c57505090565b60409192508101519101511490565b9150602082015160208201511491610c42565b90919293949680610c7e91611153565b838689161515868a1615158080610cdc575b15610cb0575050610ca091611153565b965b60011c949392919085610c23565b90915015610cc9575082610cc391611153565b96610ca2565b97909715610ca2579681610cc391611153565b5081610c90565b60019690961b95610c15565b8493929190610c11565b634e487b7160e01b5f52601160045260245ffd5b600180831614610d27575b808491099060011c9081610b82565b938385819209949050610d18565b634e487b7160e01b5f52601260045260245ffd5b5f198114610cf95760010190565b6020915f91805191604085830151920151908051604087830151920151926040519488860196875260408601526060850152608084015260a083015260c08201527f000000000000000000000000000000000000000000000000000000000000000060e08201527f00000000000000000000000000000000000000000000000000000000000000006101008201526101008152610df661012082610a99565b604051918291518091835e8101838152039060025afa156102a2575f515f5b60205f6040518281019085825284604082015260408152610e37606082610a99565b604051918291518091835e8101838152039060025afa156102a25769800000000000000000015f5160b01c17610e6c81610f5b565b610e8557505f610e7d602092610d49565b915050610e15565b91505090565b8115610d35570690565b60405190610ea282610a7d565b5f6040838281528260208201520152565b610ec590610ebf610e95565b50611266565b604081019160208201905b825184519081808213918215610f30575b505015610f2057610efa90835181019060011b906112e9565b84519081845191865181840282808502020301885260011b02905f030183528352610ed0565b50925050610f2d90611266565b90565b14905080610f40575b815f610ee1565b505f835112610f39565b90600c811015610a695760051b0190565b604051610180810181811067ffffffffffffffff8211176105595760405260028152600360208201526005604082015260076060820152600b6080820152600d60a0820152601160c0820152601360e08201526017610100820152601d610120820152601f61014082015260256101608201525f5b600c811061111a57505f19820182811180610cf95781939293925f945b6001851615611105575f945b600c861061100d5750505050505050600190565b6110178683610f4a565b51918184159283610d355780611031878060010697610e8b565b905b6110d357505060018414848782156110c3575b50506110b7575f915f5b60018101808211610cf9578b11156110ac5784610d3557868689970995610cf9578886146110865761108190610d49565b611050565b5097925092505060015b156110a1576001905b019490610ff9565b505050505050505f90565b509792509250611090565b92509560019150611099565b909150610cf95787145f87611046565b6001808316146110f2575b84610d3557808791099060011c9081611033565b849594610d3557868187960995506110de565b936111139060011c95610d49565b9493610fed565b61112e6111278284610f4a565b5184610e8b565b1561113b57600101610fd0565b61114491610f4a565b511490565b8115610d35570590565b610f2d916111e491611163610e95565b50602081019160028351938160208401958651010594519051900305926111988161119185518551906113be565b50506113be565b505093849161121f6111c1846111bb6111b2828a51611149565b998a9851611149565b93611149565b92838302604085830298019788518802810192611212868a029c8d809686611329565b6111f58c838b028603838c02611329565b5002018561120381836112e9565b0290039b8c9283890203611149565b9951890292020303611149565b936040519761122d89610a7d565b8852850290860201908202036020860152029102036040820152610eb3565b8115610d3557600160ff1b81145f19831416610cf9570590565b61126e610e95565b508051906020810191825180825f0312806112d5575b6112ce5790611298918160011b91036112e9565b9151604082519201518382028480850202010191604051936112b985610a7d565b81855260011b02016020830152604082015290565b5050905090565b5081811315611284565b8115610d35570790565b91906112f58184611149565b9261130082826112df565b15159182611318575b505061131157565b905f190190565b5f9192508113911214155f80611309565b82611336919392936113be565b50919061134381856112df565b61138b576113548161135a9361124c565b9361124c565b81810291905f8212600160ff1b821416610cf9578183051490151715610cf9578161138581836112e9565b02900391565b60405162461bcd60e51b815260206004820152600b60248201526a37379039b7b63aba34b7b760a91b6044820152606490fd5b916001925f925f938186925b6113ea575050505f81126113dd57929190565b5f90810393810392900390565b6113f78185949895611149565b9281840290039586919483850290039297809402900392956113ca56fea2646970667358221220a544430a8f5d287aee53007c4ed9cd49e3440ab6aee761fcb76c3188f9c7d1d564736f6c634300081a0033';
+async function rpc(method, params = []) {
+  const res = await fetch(RPC, { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ jsonrpc:'2.0', id:1, method, params }) });
+  const j = await res.json();
+  if (j.error) throw new Error(j.error.message);
+  return j.result;
+}
+const word = x => hex(i256(x));
+const encForm = f => word(f[0]) + word(f[1]) + word(f[2]);
+function hexToBytes(h) {
+  h = h.replace(/^0x/, '');
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(2*i, 2), 16);
+  return out;
+}
+function decSigned(hexWord) {
+  let v = BigInt('0x' + hexWord);
+  if (v >= (1n << 255n)) v -= (1n << 256n);
+  return v;
+}
+async function sendTx(from, to, data) {
+  const tx = { from, data, gas: '0x1c9c380' };
+  if (to) tx.to = to;
+  const h = await rpc('eth_sendTransaction', [tx]);
+  for (let i = 0; i < 80; i++) {
+    const r = await rpc('eth_getTransactionReceipt', [h]);
+    if (r) return r;
+    await new Promise(s => setTimeout(s, 120));
+  }
+  throw new Error('nema receipt-a');
+}
+const callView = (to, data) => rpc('eth_call', [{ to, data }, 'latest']);
+async function chainDetect() { try { return parseInt(await rpc('eth_chainId'), 16); } catch (e) { return null; } }
+async function latestBlockHash() {
+  // bump a block so the hash is fresh (a brand-new chain sits on genesis)
+  try { await sendTx(ACCOUNTS[9], ACCOUNTS[8], '0x'); } catch (e) {}
+  const b = await rpc('eth_getBlockByNumber', ['latest', false]);
+  return b && b.hash ? b.hash : ('0x' + '00'.repeat(32));
+}
+let DEPLOYER = ACCOUNTS[0];
+const deployAuction = (T, salt, g, h, deadlineTs) =>
+  sendTx(DEPLOYER, null, '0x' + BYTECODE + word(D) + word(BigInt(T)) + hex(salt) + encForm(g) + encForm(h) + word(BigInt(deadlineTs)));
+const txPlaceBid = (fromAddr, c, u, ct, name32) =>
+  sendTx(fromAddr, c, SEL.placeBid + encForm(u) + hex(ct) + hex(name32));
+const txClose = c => sendTx(DEPLOYER, c, SEL.close);
+const txOpenBid = (c, id, w, pi) => sendTx(DEPLOYER, c, SEL.openBid + word(BigInt(id)) + encForm(w) + encForm(pi));
+const txFinalize = c => sendTx(DEPLOYER, c, SEL.finalize);
+async function readMeta(c) {
+  const [t, s, gw, hw, cl, dl] = await Promise.all([
+    callView(c, SEL.T), callView(c, SEL.salt), callView(c, SEL.g), callView(c, SEL.h), callView(c, SEL.closed), callView(c, SEL.deadline)
+  ]);
+  const parse3 = r => { const x = r.slice(2); return [0,1,2].map(i => decSigned(x.slice(i*64,(i+1)*64))); };
+  return { T: Number(BigInt(t)), salt: hexToBytes(s), g: parse3(gw), h: parse3(hw),
+           closed: BigInt(cl) === 1n, deadline: Number(BigInt(dl)) };
+}
+async function readBidFull(c, id) {
+  const r = (await callView(c, SEL.bids + word(BigInt(id)))).slice(2);
+  const wAt = i => r.slice(i*64, (i+1)*64);
+  const nameBytes = hexToBytes(wAt(5));
+  let end = nameBytes.length; while (end > 0 && nameBytes[end-1] === 0) end--;
+  return {
+    u: [decSigned(wAt(0)), decSigned(wAt(1)), decSigned(wAt(2))],
+    ct: hexToBytes(wAt(3)),
+    bidder: '0x' + wAt(4).slice(-40),
+    name: new TextDecoder().decode(nameBytes.subarray(0, end)) || 'No name',
+    opened: BigInt('0x' + wAt(6)) === 1n,
+    amount: BigInt('0x' + wAt(7))
+  };
+}
+const readCount = async c => Number(BigInt(await callView(c, SEL.bidCount)));
+const readClosed = async c => BigInt(await callView(c, SEL.closed)) === 1n;
+const readFinalized = async c => BigInt(await callView(c, SEL.finalized)) === 1n;
+async function readWinner(c) {
+  const wa = await callView(c, SEL.winner);
+  const wb = await callView(c, SEL.winningBid);
+  return { addr: '0x' + wa.slice(-40), amount: BigInt(wb) };
+}
+function name32(s) {
+  const b = enc.encode(s).slice(0, 32);
+  const out = new Uint8Array(32); out.set(b);
+  return out;
+}
+</script>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const fmtS = s => s>=60 ? `${Math.floor(s/60)}m ${String(Math.round(s%60)).padStart(2,'0')}s` : `${s.toFixed(0)}s`;
+const shortForm = f => { const t=x=>{const s=x.toString(); return s.length>10 ? s.slice(0,5)+'…'+s.slice(-3) : s;}; return `(${t(f[0])}, ${t(f[1])}, …)`; };
+const shortHex = h => h.slice(0,10)+'…'+h.slice(-4);
+
+const WORKER_DRIVER = `
+self.onmessage = (ev) => {
+  const m = ev.data;
+  const CHUNK = 400;
+  if (m.cmd === 'setup') {
+    let h = m.g, done = 0;
+    const t0 = Date.now();
+    while (done < m.T) {
+      const upTo = Math.min(done + CHUNK, m.T);
+      for (; done < upTo; done++) h = compose(h, h);
+      postMessage({type:'progress', done, T:m.T, elapsed:(Date.now()-t0)/1000});
+    }
+    postMessage({type:'setup-done', h, seconds:(Date.now()-t0)/1000});
+  }
+  if (m.cmd === 'square') {
+    // faza kvadriranja: vrati w, kontrolne tačke i dešifrovan iznos
+    let w = m.u; const cps = []; let done = 0;
+    const t0 = Date.now();
+    while (done < m.T) {
+      const upTo = Math.min(done + CHUNK, m.T);
+      for (; done < upTo; done++) { if (done % CP_EVERY === 0) cps.push(w); w = compose(w, w); }
+      postMessage({type:'progress', id:m.id, done, T:m.T, elapsed:(Date.now()-t0)/1000});
+    }
+    const bidWei = decryptBid32(w, m.addr, m.salt, m.ct);
+    postMessage({type:'squared', id:m.id, w, cps, bidWei, openSec:(Date.now()-t0)/1000});
+  }
+  if (m.cmd === 'prove-slice') {
+    // parcijalni Wesolowski dokaz za opseg blokova [mLo, mHi) — nezavisan, ide paralelno
+    const { cps, bits, T, mLo, mHi } = m;
+    let acc = identity();
+    for (let t = CP_EVERY - 1; t >= 0; t--) {
+      acc = compose(acc, acc);
+      for (let mm = mLo; mm < mHi; mm++) {
+        const j = mm * CP_EVERY + t;
+        if (j < T && bits[j]) acc = compose(acc, cps[mm - mLo]);
+      }
+    }
+    postMessage({type:'slice-done', id:m.id, wi:m.wi, part:acc});
+  }
+};
+`;
+const CG_SRC = document.getElementById('cg').textContent;
+const makeWorker = () => new Worker(URL.createObjectURL(new Blob([CG_SRC + WORKER_DRIVER], {type:'application/javascript'})));
+
+const S = { role: null, rate: 20000, T: 0, g: null, h: null, salt: null,
+            contract: null, myIds: [], rendered: {}, poll: null, opening: false, finalized: false };
+
+(function calibrate(){
+  const g = hashToGroup(sha256(enc.encode('kalibracija')));
+  let x = g, n = 0; const t0 = performance.now();
+  while (performance.now() - t0 < 250) { for (let i = 0; i < 200; i++) x = compose(x, x); n += 200; }
+  S.rate = Math.max(2000, Math.round(n / ((performance.now() - t0) / 1000)));
+})();
+
+// ---------------- izbor uloge ----------------
+$('#rezim-aukcionar').addEventListener('click', async () => {
+  S.role = 'aukcionar';
+  $('#sek-rezim').classList.add('skriven');
+  $('#sek-postavka').classList.remove('skriven');
+  const id = await chainDetect();
+  const b = $('#badge');
+  if (id !== null) { b.classList.add('on'); b.textContent = `⛓ anvil radi (chain id ${id})`; }
+  else {
+    b.textContent = '✗ anvil nije dostupan';
+    const g = $('#greska-a'); g.classList.add('show');
+    g.innerHTML = `Lanac nije pokrenut. U terminalu pokreni:<br>
+      <span class="mono">anvil --host 0.0.0.0</span><br>
+      (<span class="mono">--host 0.0.0.0</span> je obavezan da bi te ponuđači sa mreže videli), pa osveži stranicu.`;
+    $('#btn-setup').disabled = true;
+  }
+});
+$('#btn-blockhash').addEventListener('click', async () => {
+  try {
+    const bh = await latestBlockHash();
+    $('#fraza').value = bh;
+    S.freshness = bh;
+    $('#btn-setup').disabled = false;
+    $('#btn-blockhash').textContent = 'Osveži iz block hasha';
+  } catch (e) {
+    const g = $('#greska-a'); g.classList.add('show'); g.textContent = 'Ne mogu da pročitam block hash: ' + e.message;
+  }
+});
+
+$('#rezim-ponudjac').addEventListener('click', () => {
+  S.role = 'ponudjac';
+  $('#sek-rezim').classList.add('skriven');
+  $('#sek-join').classList.remove('skriven');
+  $('#badge').textContent = '⛓ unesi adresu aukcionarovog lanca';
+});
+
+// ---------------- aukcionar: postavka ----------------
+$('#btn-setup').addEventListener('click', () => {
+  const fraza = S.freshness || $('#fraza').value.trim() || ('bez-fraze-' + Date.now());
+  const aukSecs = parseInt($('#trajanje').value, 10);
+  S.aukSecs = aukSecs;
+  // T pokriva trajanje aukcije + 15% margine - otkljucavanje se zavrsi TEK posle kraja
+  S.T = Math.max(256, Math.round(S.rate * aukSecs * 1.15));
+  S.salt = sha256(enc.encode('salt|' + fraza));
+  S.g = hashToGroup(sha256(enc.encode('aukcija|' + fraza)));
+  $('#btn-setup').disabled = true; $('#fraza').disabled = true; $('#trajanje').disabled = true;
+  $('#setup-info').innerHTML =
+    `Generator <span class="mono">g = ${shortForm(S.g)}</span> · ` +
+    `<span class="mono">≈${S.rate.toLocaleString('en-US')} kvadriranja/s</span> → ` +
+    `<span class="mono">T = ${S.T.toLocaleString('en-US')}</span>. Computing <span class="mono">h = g^(2^T)</span>:`;
+  const traka = $('#setup-traka'); traka.style.display = 'block';
+  const w = makeWorker();
+  w.onmessage = async ev => {
+    const m = ev.data;
+    if (m.type === 'progress') {
+      const pct = 100 * m.done / m.T;
+      traka.querySelector('.fill').style.width = pct + '%';
+      const eta = m.done ? (m.T - m.done) / (m.done / m.elapsed) : 0;
+      traka.querySelector('.txt').textContent =
+        `${pct.toFixed(0)}% · ${m.done.toLocaleString('en-US')} / ${m.T.toLocaleString('en-US')} · još ~${fmtS(eta)}`;
+    }
+    if (m.type === 'setup-done') {
+      S.h = m.h; w.terminate();
+      traka.querySelector('.fill').style.width = '100%';
+      traka.querySelector('.txt').textContent = `h izračunat za ${fmtS(m.seconds)} · postavljam ugovor…`;
+      try {
+        DEPLOYER = ACCOUNTS[Math.floor(Math.random() * ACCOUNTS.length)];
+        S.deadlineTs = Math.floor(Date.now()/1000) + S.aukSecs;
+        const rec = await deployAuction(S.T, S.salt, S.g, S.h, S.deadlineTs);
+        S.contract = rec.contractAddress;
+        traka.querySelector('.txt').textContent = `h izračunat za ${fmtS(m.seconds)} · ugovor postavljen ✓`;
+        const d = $('#deljenje'); d.classList.add('show');
+        d.innerHTML = `<b>Share with bidders</b> (they pick "Place a bid"):<br>
+          Adresa lanca: <span class="mono">http://TVOJA-IP-NA-MREŽI:8545</span>
+          &nbsp;(find your IP with <span class="mono">ipconfig</span>, e.g. 192.168.x.x)<br>
+          Contract address: <span class="mono" style="user-select:all">${S.contract}</span>`;
+        startAuctionView(true);
+        startAuctioneerTimer();
+      } catch (e) {
+        const g = $('#greska-a'); g.classList.add('show');
+        g.textContent = 'Postavljanje ugovora nije uspelo: ' + e.message;
+      }
+    }
+  };
+  w.postMessage({cmd:'setup', g:S.g, T:S.T});
+});
+
+// ---------------- ponuđač: povezivanje ----------------
+$('#btn-join').addEventListener('click', async () => {
+  const url = $('#join-rpc').value.trim();
+  const c = $('#join-contract').value.trim();
+  const g = $('#greska-b');
+  g.classList.remove('show');
+  if (!/^https?:\/\//.test(url)) { g.classList.add('show'); g.textContent = 'Adresa lanca mora počinjati sa http:// - npr. http://192.168.1.42:8545'; return; }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(c)) { g.classList.add('show'); g.textContent = 'Contract address mora biti 0x + 40 heks cifara (kopiraj sa aukcionarovog ekrana).'; return; }
+  RPC = url;
+  const id = await chainDetect();
+  if (id === null) { g.classList.add('show'); g.innerHTML = 'Lanac nije dostupan. Proveri da ste na istoj mreži i da je aukcionar pokrenuo <span class="mono">anvil --host 0.0.0.0</span>.'; return; }
+  try {
+    const meta = await readMeta(c);
+    S.contract = c; S.T = meta.T; S.salt = meta.salt; S.g = meta.g; S.h = meta.h; S.deadlineTs = meta.deadline;
+    $('#badge').classList.add('on');
+    $('#badge').textContent = `⛓ povezan (chain id ${id}) · T = ${S.T.toLocaleString('en-US')}`;
+    $('#join-info').innerHTML = `Parametri pročitani <b>sa lanca</b>: <span class="mono">g = ${shortForm(S.g)}</span>, ` +
+      `<span class="mono">h = ${shortForm(S.h)}</span>, <span class="mono">T = ${S.T.toLocaleString('en-US')}</span>. ` +
+      `Ponuda se pečati lokalno kod tebe - tajna ne napušta ovaj računar, na lanac ide samo šifrat.`;
+    $('#sek-join').classList.add('skriven');
+    startAuctionView(false, meta.closed);
+  } catch (e) { g.classList.add('show'); g.textContent = 'Čitanje ugovora nije uspelo: ' + e.message; }
+});
+
+$('#btn-finish').addEventListener('click', async () => {
+  $('#btn-finish').disabled = true;
+  $('#btn-finish').textContent = 'Working: squarings + proofs for every unopened envelope...';
+  const n = await readCount(S.contract);
+  for (let id = 0; id < n; id++) {
+    const el = document.getElementById('kov-' + id);
+    if (el && !el.classList.contains('opened') && !S.openState[id]) startOpening(id);
+  }
+});
+
+// ---------------- zajednički prikaz aukcije ----------------
+function startAuctionView(isAuctioneer, alreadyClosed = false){
+  $('#sek-aukcija').classList.remove('skriven');
+  if (isAuctioneer) {
+    $('#kontrole-a').style.display = 'flex';
+    $('#moja-karta').style.display = 'none';   // aukcionar NE licitira
+    $('#tajmer-box').style.display = 'block';
+  }
+  if (alreadyClosed) onClosed();
+  S.poll = setInterval(pollChain, 1300);
+  pollChain();
+}
+
+// tajmer aukcije: odbrojava, i kad istekne - sam zatvara i pušta presudu
+function startAuctioneerTimer(){
+  S.aukEnd = Date.now() + S.aukSecs * 1000;
+  const fill = $('#tajmer-fill'), txt = $('#tajmer-txt'), nap = $('#tajmer-nap');
+  const tick = () => {
+    const left = Math.max(0, (S.aukEnd - Date.now()) / 1000);
+    const pct = 100 * (1 - left / S.aukSecs);
+    fill.style.width = pct + '%';
+    txt.textContent = left > 0 ? `Bidding open, ${fmtS(left)} left` : 'Bidding closed';
+    const earliest = S.T / S.rate; // koliko traje otkljucavanje najranijeg bida
+    nap.innerHTML = left > 0
+      ? `Every envelope starts unlocking the moment it arrives, but each takes about ${fmtS(earliest)} (T is longer than the auction), ` +
+        `so none opens before closing time. A bid sent now opens in about ${fmtS(earliest)}.`
+      : `Bidding closed. The envelopes are finishing and the contract is deciding.`;
+    if (left <= 0) { clearInterval(S.timerInt); onAuctionEnd(); }
+  };
+  S.timerInt = setInterval(tick, 250); tick();
+}
+
+async function onAuctionEnd(){
+  if (S.closedSent) return; S.closedSent = true;
+  try { await txClose(S.contract); } catch (e) {}
+  onClosed();
+  // sve koverte koje su vec zavrsile kvadriranje -> odmah podnesi ugovoru;
+  // one koje jos racunaju bice podnete kad worker javi 'proved'
+  checkAllSubmitted();
+}
+
+async function pollChain(){
+  if (!S.contract) return;
+  try {
+    const n = await readCount(S.contract);
+    for (let id = 0; id < n; id++) {
+      if (!S.rendered[id]) { S.rendered[id] = 'pending'; await renderEnvelope(id);
+        if (S.role === 'aukcionar') startOpening(id);   // kvadriranje kreće ODMAH
+      }
+    }
+    if (S.role === 'ponudjac') {
+      // rok istekao a jos otvoreno za ponude? zatvaranje je posle roka permissionless — uradi ga SAM
+      if (!S.watchClosed && S.deadlineTs && Date.now()/1000 >= S.deadlineTs + 2) {
+        try { await txClose(S.contract); } catch (e) {}
+      }
+      if (!S.watchClosed && await readClosed(S.contract)) { S.watchClosed = true; S.closedSent = true; onClosed(); }
+      if (S.watchClosed) {
+        for (let id = 0; id < n; id++) {
+          const el = document.getElementById('kov-' + id);
+          if (el && !el.classList.contains('opened')) {
+            const b = await readBidFull(S.contract, id);
+            if (b.opened) revealEnvelope(id, formatEther(b.amount), 'contract verified and decrypted (from chain)');
+            else if (!S.openState[id]) $('#btn-finish').style.display = 'block';
+          }
+        }
+        if (!S.finalized && await readFinalized(S.contract)) { S.finalized = true; showVerdict(); }
+      }
+    }
+  } catch (e) { /* prolazan prekid mreže - sledeći poll */ }
+}
+
+async function renderEnvelope(id){
+  const b = await readBidFull(S.contract, id);
+  const el = document.createElement('div');
+  el.className = 'koverta'; el.id = 'kov-' + id;
+  const mine = S.myIds.includes(id);
+  el.innerHTML = `
+    <div class="pecat">🔒</div>
+    <h3>${b.name}${mine ? '<span class="moja-oznaka">yours</span>' : ''}</h3>
+    <div class="cifra-red">
+      <b>address</b> <span class="mono">${shortHex(b.bidder)}</span><br>
+      <b>u</b> = g^r = <span class="mono">${shortForm(b.u)}</span><br>
+      <b>ciphertext</b> <span class="mono">${hex(b.ct).slice(0,26)}...</span>
+    </div>
+    <div class="traka" style="display:none"><div class="tiks"></div><div class="fill"></div><div class="txt"></div></div>
+    <div class="otkriveno"><div class="iznos"></div><div class="val">ETH</div></div>
+    <div class="status-red"></div>`;
+  $('#koverte').appendChild(el);
+  S.rendered[id] = b;
+}
+
+function revealEnvelope(id, amountStr, statusHtml){
+  const el = document.getElementById('kov-' + id);
+  if (!el || el.classList.contains('opened')) return;
+  el.classList.add('opened');
+  el.querySelector('.otkriveno .iznos').textContent = amountStr;
+  if (statusHtml) el.querySelector('.status-red').innerHTML = `<span class="ok">${statusHtml}</span>`;
+  S.rendered[id].bid = amountStr;
+}
+
+// ---------------- pečaćenje (obe uloge) ----------------
+$('#btn-pecati').addEventListener('click', sealMine);
+$('#moj-iznos').addEventListener('keydown', e => { if (e.key === 'Enter') sealMine(); });
+async function sealMine(){
+  const name = $('#moje-ime').value.trim() || 'No name';
+  const amount = $('#moj-iznos').value.trim().replace(',', '.');
+  const st = $('#moj-status');
+  if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) { st.textContent = 'Enter a positive amount.'; return; }
+  $('#btn-pecati').disabled = true;
+  const acctIdx = 1 + (sha256(enc.encode(name))[0] % 9);
+  const addr = ACCOUNTS[acctIdx];
+  const t0 = performance.now();
+  const r = randBig(160);
+  const u = powF(S.g, r);
+  const hr = powF(S.h, r);
+  const wei = parseEther(amount);
+  const ct = encryptBid32(hr, addrToBytes(addr), S.salt, wei);
+  const ms = performance.now() - t0;
+  $('#moj-iznos').value = '';
+  st.textContent = `sealed in ${ms.toFixed(0)} ms, sending to the chain...`;
+  try {
+    const rec = await txPlaceBid(addr, S.contract, u, ct, name32(name));
+    const log = rec.logs.find(l => l.topics && l.topics[0] === TOPIC_BID_PLACED);
+    const id = log ? Number(BigInt(log.topics[1])) : null;
+    if (id !== null) S.myIds.push(id);
+    st.innerHTML = `<span class="ok">envelope #${id} on chain</span>, tx <span class="mono">${shortHex(rec.transactionHash)}</span>, ` +
+      `gas ${parseInt(rec.gasUsed,16).toLocaleString('en-US')}. r and the amount are gone, they exist only in the ciphertext.`;
+    $('#btn-pecati').disabled = false;
+    pollChain();
+  } catch (e) {
+    st.textContent = 'tx failed: ' + e.message;
+    $('#btn-pecati').disabled = false;
+  }
+}
+
+// ---------------- auctioneer: opening starts as each bid arrives ----------------
+S.openState = {}; // id -> {done, submitted, w, pi}
+const CORES = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4)));
+
+function startOpening(id){
+  const b = S.rendered[id];
+  if (!b || S.openState[id]) return;
+  S.openState[id] = { done: false, submitted: false };
+  const el = document.getElementById('kov-' + id);
+  el.querySelector('.traka').style.display = 'block';
+  const sq = makeWorker();
+  sq.onmessage = ev => {
+    const m = ev.data;
+    const traka = el.querySelector('.traka');
+    if (m.type === 'progress') {
+      const pct = 100 * m.done / m.T;
+      traka.querySelector('.fill').style.width = pct + '%';
+      const eta = m.done ? (m.T - m.done) / (m.done / m.elapsed) : 0;
+      traka.querySelector('.txt').textContent = `squaring ${pct.toFixed(0)}%, about ${fmtS(eta)} left`;
+    }
+    if (m.type === 'squared') {
+      traka.querySelector('.txt').textContent = `squaring done in ${fmtS(m.openSec)}`;
+      S.openState[id].w = m.w; S.openState[id].bidWei = m.bidWei;
+      sq.terminate();
+      proveParallel(id, b.u, m.w, m.cps, el);
+    }
+  };
+  sq.postMessage({cmd:'square', id, u:b.u, T:S.T, addr:addrToBytes(b.bidder), salt:S.salt, ct:b.ct});
+}
+
+// Wesolowski proof split across all cores: independent block ranges, then combine
+function proveParallel(id, u, w, cps, el){
+  const t0 = performance.now();
+  const l = hashToPrime80(fsSeed(u, w, S.T));
+  const bits = quotientBits(S.T, l);
+  const M = cps.length;
+  const nSlices = Math.min(CORES, M);
+  const bounds = [];
+  for (let i = 0; i <= nSlices; i++) bounds.push(Math.floor(i * M / nSlices));
+  const parts = new Array(nSlices);
+  let finished = 0;
+  el.querySelector('.status-red').textContent = `building the Wesolowski proof on ${nSlices} cores...`;
+  const combine = () => {
+    let acc = null;
+    for (const p of parts) { if (!p) continue; acc = acc ? compose(acc, p) : p; }
+    S.openState[id].pi = acc;
+    S.openState[id].done = true;
+    S.openState[id].proveSec = (performance.now() - t0) / 1000;
+    if (S.closedSent) submitOpen(id);
+    else el.querySelector('.status-red').innerHTML =
+      `<span class="ok">unlocked</span>, proof in ${fmtS(S.openState[id].proveSec)} on ${nSlices} cores, waiting for closing time`;
+  };
+  for (let wi = 0; wi < nSlices; wi++) {
+    const mLo = bounds[wi], mHi = bounds[wi + 1];
+    if (mHi <= mLo) { parts[wi] = null; if (++finished === nSlices) combine(); continue; }
+    const pw = makeWorker();
+    pw.onmessage = ev => {
+      if (ev.data.type === 'slice-done') {
+        parts[ev.data.wi] = ev.data.part;
+        pw.terminate();
+        if (++finished === nSlices) combine();
+      }
+    };
+    pw.postMessage({ cmd:'prove-slice', id, wi, cps: cps.slice(mLo, mHi), bits, T:S.T, mLo, mHi });
+  }
+}
+
+async function submitOpen(id){
+  const st = S.openState[id];
+  if (!st || !st.done || st.submitted) return;
+  st.submitted = true;
+  const el = document.getElementById('kov-' + id);
+  revealEnvelope(id, formatEther(st.bidWei));
+  el.querySelector('.status-red').textContent = 'submitting the opening to the contract...';
+  try {
+    const pre = await readBidFull(S.contract, id);
+    if (pre.opened) {
+      el.querySelector('.status-red').innerHTML = '<span class="ok">someone else submitted this opening first (also fine: anyone may)</span>';
+      checkAllSubmitted();
+      return;
+    }
+    const rec = await txOpenBid(S.contract, id, st.w, st.pi);
+    if (rec.status === '0x1') {
+      const info = await readBidFull(S.contract, id);
+      el.querySelector('.status-red').innerHTML =
+        `<span class="ok">contract verified and decrypted: ${formatEther(info.amount)} ETH</span>, ` +
+        `gas ${parseInt(rec.gasUsed,16).toLocaleString('en-US')}, tx <span class="mono">${shortHex(rec.transactionHash)}</span>`;
+    } else {
+      el.querySelector('.status-red').textContent = 'contract REJECTED the opening (revert)';
+    }
+  } catch (e) { el.querySelector('.status-red').textContent = 'error: ' + e.message; }
+  checkAllSubmitted();
+}
+
+async function checkAllSubmitted(){
+  if (!S.closedSent || S.finalized) return;
+  const n = await readCount(S.contract);
+  // podnesi sve koje su gotove a jos nisu poslate
+  for (let id = 0; id < n; id++) if (S.openState[id] && S.openState[id].done && !S.openState[id].submitted) await submitOpen(id);
+  // svi otvoreni na lancu?
+  for (let id = 0; id < n; id++) {
+    const info = await readBidFull(S.contract, id);
+    if (!info.opened) return; // jos ceka neku kovertu
+  }
+  if (!S.finalized) {
+    try { await txFinalize(S.contract); S.finalized = true; showVerdict(); } catch (e) {}
+  }
+}
+
+function onClosed(){
+  $('#moja-karta').style.display = 'none';
+  if (S.role === 'ponudjac') $('#watch-nap').style.display = 'block';
+}
+
+async function showVerdict(){
+  const wv = await readWinner(S.contract);
+  let winId = null;
+  for (const [id, b] of Object.entries(S.rendered)) {
+    if (b && b.bidder && b.bidder.toLowerCase() === wv.addr.toLowerCase()) {
+      const bb = await readBidFull(S.contract, Number(id));
+      if (bb.amount === wv.amount) { winId = Number(id); break; }
+    }
+  }
+  if (winId !== null) document.getElementById('kov-' + winId).classList.add('winner');
+  const name = winId !== null ? S.rendered[winId].name : '?';
+  const ban = $('#baner'); ban.classList.add('show');
+  ban.innerHTML = `<div class="ko">Winner: <em>${name}</em> - ${formatEther(wv.amount)} ETH</div>
+    <div class="presuda"><span class="ok">Decided on-chain by the contract</span>, winning address <span class="mono">${shortHex(wv.addr)}</span>,
+    every envelope opened after T with a verified proof</div>`;
+}
+</script>
+</body>
+</html>

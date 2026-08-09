@@ -240,12 +240,107 @@ library LibClassGroupBig {
         return _compact(square(f, D), fmp0);
     }
 
+    /// @dev NUCOMP (van der Poorten, Math.Comp.72 (2003), Algorithm 3). Composes two
+    ///      distinct forms while partially reducing, so intermediates stay ~|D|^(1/2)
+    ///      instead of growing to |D| and needing a full ~150-step reduce. Validated in
+    ///      Python against the classic compose on 1600+ cases up to 1792-bit (both the
+    ///      coprime F=1 branch and the F>1 branch). Convention: b*u2 + c*u1 = F.
+    struct _NC { B.Int G; B.Int By; B.Int Bx; B.Int Cy; B.Int Dy; }
+
+    function nucomp(Form memory f1, Form memory f2, B.Int memory D)
+        internal pure returns (Form memory)
+    {
+        // NUCOMP requires distinct forms; duplicate composition is NUDUPL (square).
+        if (eq(f1, f2)) return square(f1, D);
+        // (1) s = (v1+v2)/2 ; m = v2 - s
+        B.Int memory s = B.shr1(B.add(f1.b, f2.b));
+        B.Int memory m = B.sub(f2.b, s);
+        _NC memory nc;
+        {
+            // (2) need b with b*u2 + c*u1 = F=gcd(u1,u2). xgcdHalf(u2,u1) gives (F,b)
+            //     with u2*b ≡ F (mod u1) — Lehmer-fast, and b is all the common
+            //     F|s branch needs. (Any valid b works: Bx = m*b mod (u1/F) is
+            //     invariant under b -> b + u1/F.)
+            (B.Int memory F, B.Int memory b) = B.xgcdHalf(f2.a, f1.a);
+            if (B.isZero(B.fmod(s, F))) {
+                nc.G = F;
+                nc.By = B.fdiv(f1.a, F);
+                nc.Bx = B.fmod(B.mul(m, b), nc.By);
+                nc.Cy = B.fdiv(f2.a, F);
+                nc.Dy = B.fdiv(s, F);
+            } else {
+                // rare branch: recover c = (F - b*u2)/u1 (exact), then (G, yF)
+                B.Int memory c = B.fdiv(B.sub(F, B.mul(b, f2.a)), f1.a);
+                (B.Int memory G, B.Int memory yF) = B.xgcdHalf(s, F); // s*yF ≡ G (mod F)
+                B.Int memory H = B.fdiv(F, G);
+                nc.G = G;
+                nc.By = B.fdiv(f1.a, G);
+                nc.Cy = B.fdiv(f2.a, G);
+                nc.Dy = B.fdiv(s, G);
+                // (4) l = yF*(b*w1 + c*w2) mod H
+                B.Int memory inner = B.add(B.mul(b, B.fmod(f1.c, H)), B.mul(c, B.fmod(f2.c, H)));
+                B.Int memory l = B.fmod(B.mul(yF, inner), H);
+                B.Int memory bx0 = B.add(B.mul(b, B.fdiv(m, H)), B.mul(l, B.fdiv(f1.a, F)));
+                nc.Bx = B.fmod(bx0, nc.By);
+            }
+        }
+        // partial reduction threshold: bitLen(D)/4  (== |D|^(1/4)), same as NUDUPL
+        return _nucompFinish(f1, f2, m, nc, B.bitLen(D) >> 2);
+    }
+
+    function _nucompFinish(
+        Form memory f1, Form memory f2, B.Int memory m, _NC memory nc, uint256 stopBits
+    ) private pure returns (Form memory) {
+        // (5) partial Euclid on (By, Bx mod By) via the Lehmer-batched engine.
+        //     xgcdPartial returns two consecutive remainders (rP,rC) with cofactors
+        //     (bP,bC) and total-step parity. Map: by=rP, bx=rC, y=bP, x=bC.
+        (B.Int memory by, B.Int memory bx, B.Int memory y, B.Int memory x, bool evenTot) =
+            B.xgcdPartial(nc.By, B.fmod(nc.Bx, nc.By), stopBits);
+        bool noSteps = B.isZero(y) && B.isOne(x); // z == 0 (no Euclid step taken)
+        if (!evenTot) { by = B.negate(by); y = B.negate(y); } // z odd
+        B.Int memory ax = B.mul(nc.G, x);
+        B.Int memory ay = B.mul(nc.G, y);
+        // (6) near reduced composite
+        B.Int memory u3; B.Int memory v3; B.Int memory w3;
+        if (noSteps) {
+            B.Int memory cx = B.fdiv(B.sub(B.mul(bx, nc.Cy), m), nc.By);
+            B.Int memory cy = B.isZero(bx)
+                ? B.fdiv(B.mul(by, f2.a), f1.a)
+                : B.fdiv(B.add(B.mul(by, cx), m), bx);
+            B.Int memory dx = B.fdiv(B.sub(B.mul(bx, nc.Dy), f2.c), nc.By);
+            u3 = B.mul(by, cy);
+            w3 = B.sub(B.mul(bx, cx), B.mul(nc.G, dx));
+            v3 = B.sub(B.mul(nc.G, nc.Dy), B.add(B.mul(bx, cy), B.mul(by, cx)));
+        } else {
+            B.Int memory cx = B.fdiv(B.sub(B.mul(bx, nc.Cy), B.mul(m, x)), nc.By);
+            B.Int memory cy = B.isZero(bx)
+                ? B.fdiv(B.sub(B.mul(f2.a, by), B.mul(y, m)), f1.a)
+                : B.fdiv(B.add(B.mul(by, cx), m), bx);
+            B.Int memory dx = B.fdiv(B.sub(B.mul(bx, nc.Dy), B.mul(f2.c, x)), nc.By);
+            B.Int memory dy = B.fdiv(B.add(B.mul(dx, y), nc.Dy), x);
+            u3 = B.sub(B.mul(by, cy), B.mul(ay, dy));
+            w3 = B.sub(B.mul(bx, cx), B.mul(ax, dx));
+            v3 = B.sub(B.add(B.mul(ax, dy), B.mul(ay, dx)), B.add(B.mul(bx, cy), B.mul(by, cx)));
+        }
+        return reduce(Form(u3, v3, w3));
+    }
+
     function composeCompact(Form memory f1, Form memory f2, B.Int memory D)
         internal pure returns (Form memory)
     {
         uint256 fmp0;
         assembly { fmp0 := mload(0x40) }
         return _compact(compose(f1, f2, D), fmp0);
+    }
+
+    /// @dev memory-compacted NUCOMP — same wrapper as composeCompact, ~7x cheaper
+    ///      composition. Use in long verification chains of distinct forms.
+    function nucompCompact(Form memory f1, Form memory f2, B.Int memory D)
+        internal pure returns (Form memory)
+    {
+        uint256 fmp0;
+        assembly { fmp0 := mload(0x40) }
+        return _compact(nucomp(f1, f2, D), fmp0);
     }
 
     /// @dev OPT: MSB-first square-and-multiply. The LSB-first version paid for

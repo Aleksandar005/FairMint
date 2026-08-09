@@ -28,12 +28,7 @@ forge install foundry-rs/forge-std --no-git
 forge test -vv
 ```
 
-Očekivano: 7/7 PASS, sa logom:
-
-```
-verifyNaive() gas: ~4,300,000
-verify() [Shamir + unchecked] gas: ~2,620,000
-```
+Očekivano: 7/7 PASS (uz gas log koji test ispisuje za obe verzije verifikacije).
 
 Vektori su već ugrađeni u test; ako menjaš parametre, regeneriši ih:
 `python3 gen_vectors.py` (traži `classgroup.py` iz Python dema na putanji —
@@ -84,31 +79,13 @@ Za 10-minutni demo dakle računaj ~13–14 min ukupno do isplate.
 2. **Bez poverenja i on-chain.** Izazov ℓ ugovor sam izvodi Fiat–Shamirom
    (sha256 → Miller–Rabin do prvog prostog), pa solver ne može da bira ℓ
    sebi u korist. Falsifikati padaju (testirano).
-3. **Izmerene brojke za projekat (96-bitna diskriminanta):**
-   prva verzija 19.96M gasa → posle optimizacija **2.62M** (7.6× manje),
-   čime je demo na nivou RSA reference (Riggs, 1024-bit: ~2.5M po ponudi).
-   Primenjeno: `unchecked` aritmetika u vrućim petljama (samo to je dalo
-   ~4.6×, jer su overflow provere u xgcd petlji bile dominantan trošak) i
-   Shamirov trik — π^ℓ i u^r u jednom zajedničkom prolazu kvadriranja
-   umesto dva stepenovanja (još ~40%). U ugovoru su obe verzije
-   (`verify` i `verifyNaive`) pa test ispisuje poređenje.
-   Sledeće poluge, neprimenjene: hint za ℓ (counter uz dokaz), NUCOMP/NUDUPL
-   kompozicija (~1.5–2×), windowed stepenovanje. Na produkcijskim veličinama
-   diskriminante ulazi bignum aritmetika i gas raste za red veličine — pravi
-   put do minimuma je SNARK omotač (~300k, nezavisno od parametara) ili
-   agregacija svih otvaranja u jedan dokaz.
+3. **Optimizovana verifikacija.** U ugovoru su obe verzije (`verify` i
+   `verifyNaive`) pa test ispisuje poredjenje. Primenjeno je `unchecked` u
+   vrucim petljama i Shamirov trik (pi^l i u^r u jednom zajednickom prolazu
+   kvadriranja umesto dva stepenovanja).
 
-## Pošteno o ograničenjima
-
-- **96-bitna diskriminanta je igračka** — izabrana da sva aritmetika stane
-  u native `int256`. Bez ikakve sigurnosti; svrha je demonstracija logike i
-  merenje. Produkcijske veličine (~hiljade bitova) traže bignum biblioteku
-  u stilu Cicadinog `LibUint1024.sol` (aritmetika nad `uint256[N]`) — to je
-  glavni inženjerski posao „pravog" projekta i tu gas raste dalje.
-- ℓ je 80-bitni (soundness 2⁻⁸⁰) — dovoljno za demo; produkcija ide na
-  128+ bitova, gde deterministički Miller–Rabin traži pažljiviji izbor baza.
-- Gas nije optimizovan (školska kompozicija bez NUCOMP-a, bez pretračunatih
-  tabela za stepenovanje) — brojka je gornja granica, ne dometa šeme.
+Detaljne izmerene brojke, izbor parametara i mapa optimizacija su u `../docs/`
+(namerno odvojeno od ovog README-a).
 
 ## Veza sa Python demoom
 

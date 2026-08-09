@@ -228,3 +228,76 @@ def serialize(f) -> bytes:
     """Kanonska serijalizacija redukovane forme — za heširanje i ključeve."""
     a, b, c = reduce_form(f)
     return repr((a, b, c)).encode()
+
+# ---------------------------------------------------------------------------
+# NUCOMP (van der Poorten alg. 3) — Python ogledalo Solidity implementacije,
+# za generisanje vektora i masovnu validaciju protiv klasicnog compose().
+# ---------------------------------------------------------------------------
+
+def _xgcd_partial(a, mu, stop_bits):
+    """Parcijalni Euklid na (a, mu): vraca (rP, rC, bP, bC, even_steps)."""
+    rP, rC, bP, bC = a, mu, 0, 1
+    steps = 0
+    while rC != 0 and rC.bit_length() > stop_bits:
+        q = rP // rC
+        rP, rC, bP, bC = rC, rP - q * rC, bC, bP - q * bC
+        steps += 1
+    return rP, rC, bP, bC, steps % 2 == 0
+
+def nucomp(f1, f2, D):
+    """Kompozicija sa parcijalnom redukcijom; identicna klasa kao compose."""
+    if f1 == f2:
+        return square(f1)
+    u1, v1, w1 = f1
+    u2, v2, w2 = f2
+    s = (v1 + v2) // 2
+    m = v2 - s
+    # F = gcd(u1,u2) i b: u2*b == F (mod u1)
+    import math
+    def xgcd(x, y):
+        if y == 0:
+            return (x, 1, 0) if x >= 0 else (-x, -1, 0)
+        g, p, q = xgcd(y, x % y)
+        return g, q, p - (x // y) * q
+    F, b, _ = xgcd(u2, u1)
+    if F < 0:
+        F, b = -F, -b
+    if s % F == 0:
+        G = F
+        By = u1 // F
+        Bx = (m * b) % By
+        Cy = u2 // F
+        Dy = s // F
+    else:
+        c = (F - b * u2) // u1
+        G, yF, _ = xgcd(s, F)
+        if G < 0:
+            G, yF = -G, -yF
+        H = F // G
+        By = u1 // G
+        Cy = u2 // G
+        Dy = s // G
+        l = (yF * (b * (w1 % H) + c * (w2 % H))) % H
+        Bx = (b * (m // H) + l * (u1 // F)) % By
+    stop = abs(D).bit_length() >> 2
+    by, bx, y, x, even = _xgcd_partial(By, Bx % By, stop)
+    no_steps = (y == 0 and x == 1)
+    if not even:
+        by, y = -by, -y
+    ax, ay = G * x, G * y
+    if no_steps:
+        cx = (bx * Cy - m) // By
+        cy = (by * u2) // u1 if bx == 0 else (by * cx + m) // bx
+        dx = (bx * Dy - w2) // By
+        u3 = by * cy
+        w3 = bx * cx - G * dx
+        v3 = G * Dy - (bx * cy + by * cx)
+    else:
+        cx = (bx * Cy - m * x) // By
+        cy = (u2 * by - y * m) // u1 if bx == 0 else (by * cx + m) // bx
+        dx = (bx * Dy - w2 * x) // By
+        dy = (dx * y + Dy) // x
+        u3 = by * cy - ay * dy
+        w3 = bx * cx - ax * dx
+        v3 = (ax * dy + ay * dx) - (bx * cy + by * cx)
+    return reduce_form((u3, v3, w3))

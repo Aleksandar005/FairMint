@@ -262,7 +262,15 @@ library LibClassGroupBig {
             //     F|s branch needs. (Any valid b works: Bx = m*b mod (u1/F) is
             //     invariant under b -> b + u1/F.)
             (B.Int memory F, B.Int memory b) = B.xgcdHalf(f2.a, f1.a);
-            if (B.isZero(B.fmod(s, F))) {
+            if (B.isOne(F)) {
+                // OPT NIVO 10: za prost |D| je F == 1 UVEK — preskoci fmod(s,F)
+                // i tri deljenja jedinicom
+                nc.G = F;
+                nc.By = f1.a;
+                nc.Bx = B.fmod(B.mul(m, b), f1.a);
+                nc.Cy = f2.a;
+                nc.Dy = s;
+            } else if (B.isZero(B.fmod(s, F))) {
                 nc.G = F;
                 nc.By = B.fdiv(f1.a, F);
                 nc.Bx = B.fmod(B.mul(m, b), nc.By);
@@ -295,7 +303,7 @@ library LibClassGroupBig {
         //     xgcdPartial returns two consecutive remainders (rP,rC) with cofactors
         //     (bP,bC) and total-step parity. Map: by=rP, bx=rC, y=bP, x=bC.
         (B.Int memory by, B.Int memory bx, B.Int memory y, B.Int memory x, bool evenTot) =
-            B.xgcdPartial(nc.By, B.fmod(nc.Bx, nc.By), stopBits);
+            B.xgcdPartial(nc.By, nc.Bx, stopBits); // Bx vec redukovan mod By u svim granama
         bool noSteps = B.isZero(y) && B.isOne(x); // z == 0 (no Euclid step taken)
         if (!evenTot) { by = B.negate(by); y = B.negate(y); } // z odd
         B.Int memory ax = B.mul(nc.G, x);
@@ -333,6 +341,67 @@ library LibClassGroupBig {
         return _compact(compose(f1, f2, D), fmp0);
     }
 
+    /// @dev OPT NIVO 7: Shamir dvostruka eksponencijacija f1^e1 * f2^e2 sa
+    ///      prekomputovanom tabelom (f1, f2, f1*f2): jedno kvadriranje po bitu
+    ///      i NAJVISE jedna kompozicija (bit-par 11 kosta jednu, ne dve).
+    ///      MSB-first, bez kompozicija sa identitetom. Kompaktne operacije.
+    function shamir(
+        Form memory f1, uint256 e1,
+        Form memory f2, uint256 e2,
+        B.Int memory D
+    ) internal pure returns (Form memory r) {
+        if (e1 == 0 && e2 == 0) return identity(D);
+        if (e1 == 0) return pow(f2, e2, D);
+        if (e2 == 0) return pow(f1, e1, D);
+        // OPT NIVO 9: joint-NAF — cifre {-1,0,+1}, gustina 1/3 po eksponentu,
+        // zajednicka ne-nula kolona 5/9 umesto 3/4 (inverzija je besplatna!)
+        (uint256 P1, uint256 N1) = _naf(e1);
+        (uint256 P2, uint256 N2) = _naf(e2);
+        Form[9] memory tab; // indeks (d1+1)*3 + (d2+1)
+        tab[8] = nucompCompact(f1, f2, D);          // ( 1, 1)
+        tab[6] = nucompCompact(f1, inverse(f2), D); // ( 1,-1)
+        tab[7] = f1;
+        tab[5] = f2;
+        tab[3] = inverse(f2);                       // ( 0,-1)
+        tab[1] = inverse(f1);                       // (-1, 0)
+        tab[0] = inverse(tab[8]);                   // (-1,-1)
+        tab[2] = inverse(tab[6]);                   // (-1, 1)
+        uint256 all = P1 | N1 | P2 | N2;
+        uint256 bit = 1 << 255;
+        while (all & bit == 0) bit >>= 1;
+        r = tab[_nafIdx(P1, N1, P2, N2, bit)];
+        bit >>= 1;
+        while (bit != 0) {
+            r = squareCompact(r, D);
+            if (all & bit != 0) r = nucompCompact(r, tab[_nafIdx(P1, N1, P2, N2, bit)], D);
+            bit >>= 1;
+        }
+    }
+
+    /// @dev NAF maske: e = P - N, P & N == 0, bez susednih ne-nula cifara
+    function _naf(uint256 e) internal pure returns (uint256 P, uint256 N) {
+        require(e < (uint256(1) << 255), "naf range"); // e+1 ne sme da prekoraci
+        uint256 i;
+        unchecked {
+        while (e != 0) {
+            if (e & 1 != 0) {
+                if (e & 3 == 1) { P |= (uint256(1) << i); e -= 1; }
+                else { N |= (uint256(1) << i); e += 1; }
+            }
+            e >>= 1;
+            i++;
+        }
+        }
+    }
+
+    function _nafIdx(uint256 P1, uint256 N1, uint256 P2, uint256 N2, uint256 bit)
+        private pure returns (uint256)
+    {
+        uint256 d1 = P1 & bit != 0 ? 2 : (N1 & bit != 0 ? 0 : 1);
+        uint256 d2 = P2 & bit != 0 ? 2 : (N2 & bit != 0 ? 0 : 1);
+        return d1 * 3 + d2;
+    }
+
     /// @dev memory-compacted NUCOMP — same wrapper as composeCompact, ~7x cheaper
     ///      composition. Use in long verification chains of distinct forms.
     function nucompCompact(Form memory f1, Form memory f2, B.Int memory D)
@@ -357,7 +426,7 @@ library LibClassGroupBig {
         bit >>= 1;
         while (bit != 0) {
             r = squareCompact(r, D);
-            if (e & bit != 0) r = composeCompact(r, f, D);
+            if (e & bit != 0) r = nucompCompact(r, f, D); // NIVO 4: NUCOMP staza
             bit >>= 1;
         }
     }

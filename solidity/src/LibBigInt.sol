@@ -24,10 +24,15 @@ library LibBigInt {
     // construction / normalization
     // ----------------------------------------------------------------
 
-    function fromUint(uint256 x) internal pure returns (Int memory z) {
-        z.limbs = new uint256[](1);
-        z.limbs[0] = x;
-        _trim(z);
+    function fromUint(uint256 v) internal pure returns (Int memory z) {
+        uint256[] memory L;
+        assembly {
+            L := mload(0x40)
+            mstore(L, 1)
+            mstore(add(L, 0x20), v)
+            mstore(0x40, add(L, 0x40))
+        }
+        z.limbs = L;
     }
 
     function fromInt(int256 x) internal pure returns (Int memory z) {
@@ -37,29 +42,49 @@ library LibBigInt {
         _trim(z);
     }
 
-    function isZero(Int memory a) internal pure returns (bool) {
-        for (uint256 i = 0; i < a.limbs.length; i++) if (a.limbs[i] != 0) return false;
-        return true;
+    function isZero(Int memory a) internal pure returns (bool z) {
+        uint256[] memory L = a.limbs;
+        assembly {
+            z := 1
+            let n := mload(L)
+            let d := add(L, 0x20)
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                if mload(add(d, shl(5, i))) {
+                    z := 0
+                    break
+                }
+            }
+        }
     }
 
     function _trim(Int memory a) internal pure {
         uint256[] memory l = a.limbs;
-        uint256 n = l.length;
-        while (n > 1 && l[n - 1] == 0) n--;
-        if (n != l.length) {
-            // OPT: shrink in place — we only ever reduce the length, and _trim is
-            // only called on freshly allocated outputs, so no aliasing hazard and
-            // no reallocation + copy.
-            assembly { mstore(l, n) }
+        bool z;
+        assembly {
+            let n := mload(l)
+            let d := add(l, 0x20)
+            for { } gt(n, 1) { } {
+                if mload(add(d, shl(5, sub(n, 1)))) { break }
+                n := sub(n, 1)
+            }
+            mstore(l, n) // samo skracuje — bez realokacije
+            z := and(eq(n, 1), iszero(mload(d)))
         }
-        // after trimming, zero iff the single remaining limb is zero
-        if (n == 1 && l[0] == 0) a.neg = false; // canonical zero
+        if (z) a.neg = false; // kanonicka nula
     }
 
     function clone(Int memory a) internal pure returns (Int memory z) {
         z.neg = a.neg;
-        z.limbs = new uint256[](a.limbs.length);
-        for (uint256 i = 0; i < a.limbs.length; i++) z.limbs[i] = a.limbs[i];
+        uint256[] memory src = a.limbs;
+        uint256[] memory dst;
+        assembly {
+            let bytesLen := shl(5, mload(src))
+            dst := mload(0x40)
+            mstore(dst, mload(src))
+            mcopy(add(dst, 0x20), add(src, 0x20), bytesLen) // cancun
+            mstore(0x40, add(add(dst, 0x20), bytesLen))
+        }
+        z.limbs = dst;
     }
 
     // ----------------------------------------------------------------
@@ -67,20 +92,43 @@ library LibBigInt {
     // ----------------------------------------------------------------
 
     /// @dev compare magnitudes: -1 if |a|<|b|, 0 if equal, 1 if |a|>|b|
-    function _ucmp(uint256[] memory a, uint256[] memory b) private pure returns (int256) {
-        uint256 la = a.length; uint256 lb = b.length;
-        // account for possible trailing zeros
-        while (la > 0 && a[la - 1] == 0) la--;
-        while (lb > 0 && b[lb - 1] == 0) lb--;
-        if (la != lb) return la > lb ? int256(1) : int256(-1);
-        for (uint256 i = la; i > 0; i--) {
-            if (a[i - 1] != b[i - 1]) return a[i - 1] > b[i - 1] ? int256(1) : int256(-1);
+    function _ucmp(uint256[] memory a, uint256[] memory b) private pure returns (int256 res) {
+        assembly {
+            let la := mload(a)
+            let lb := mload(b)
+            let ad := add(a, 0x20)
+            let bd := add(b, 0x20)
+            for { } gt(la, 0) { } {
+                if mload(add(ad, shl(5, sub(la, 1)))) { break }
+                la := sub(la, 1)
+            }
+            for { } gt(lb, 0) { } {
+                if mload(add(bd, shl(5, sub(lb, 1)))) { break }
+                lb := sub(lb, 1)
+            }
+            switch eq(la, lb)
+            case 0 {
+                switch gt(la, lb)
+                case 1 { res := 1 }
+                default { res := sub(0, 1) }
+            }
+            default {
+                for { let i := la } gt(i, 0) { i := sub(i, 1) } {
+                    let av := mload(add(ad, shl(5, sub(i, 1))))
+                    let bv := mload(add(bd, shl(5, sub(i, 1))))
+                    if iszero(eq(av, bv)) {
+                        switch gt(av, bv)
+                        case 1 { res := 1 }
+                        default { res := sub(0, 1) }
+                        break
+                    }
+                }
+            }
         }
-        return 0;
     }
 
     /// @dev unsigned add: |a| + |b|
-    function _uadd(uint256[] memory a, uint256[] memory b) private pure returns (uint256[] memory r) {
+    function _uaddRef(uint256[] memory a, uint256[] memory b) internal pure returns (uint256[] memory r) {
         uint256 n = a.length >= b.length ? a.length : b.length;
         r = new uint256[](n + 1);
         uint256 carry = 0;
@@ -100,7 +148,7 @@ library LibBigInt {
     }
 
     /// @dev unsigned sub: |a| - |b|, requires |a| >= |b|
-    function _usub(uint256[] memory a, uint256[] memory b) private pure returns (uint256[] memory r) {
+    function _usubRef(uint256[] memory a, uint256[] memory b) internal pure returns (uint256[] memory r) {
         r = new uint256[](a.length);
         uint256 borrow = 0;
         for (uint256 i = 0; i < a.length; i++) {
@@ -116,6 +164,68 @@ library LibBigInt {
             }
         }
         return r;
+    }
+
+    /// @dev OPT NIVO 5: |a|+|b| u asembleru, bez bounds check-ova i zero-init-a
+    function _uadd(uint256[] memory a, uint256[] memory b) internal pure returns (uint256[] memory r) {
+        assembly {
+            let la := mload(a)
+            let lb := mload(b)
+            if lt(la, lb) { let t := a a := b b := t t := la la := lb lb := t }
+            r := mload(0x40)
+            mstore(r, add(la, 1))
+            let rd := add(r, 0x20)
+            let ad := add(a, 0x20)
+            let bd := add(b, 0x20)
+            let carry := 0
+            let i := 0
+            for { } lt(i, lb) { i := add(i, 1) } {
+                let ai := mload(add(ad, shl(5, i)))
+                let sum := add(ai, mload(add(bd, shl(5, i))))
+                let c1 := lt(sum, ai)
+                let s2 := add(sum, carry)
+                mstore(add(rd, shl(5, i)), s2)
+                carry := or(c1, lt(s2, sum)) // c1 i c2 ne mogu oba biti 1
+            }
+            for { } lt(i, la) { i := add(i, 1) } {
+                let ai := mload(add(ad, shl(5, i)))
+                let s2 := add(ai, carry)
+                mstore(add(rd, shl(5, i)), s2)
+                carry := lt(s2, ai)
+            }
+            mstore(add(rd, shl(5, la)), carry)
+            mstore(0x40, add(rd, shl(5, add(la, 1))))
+        }
+    }
+
+    /// @dev OPT NIVO 5: |a|-|b| u asembleru (zahteva |a| >= |b|, kao i ref)
+    function _usub(uint256[] memory a, uint256[] memory b) internal pure returns (uint256[] memory r) {
+        assembly {
+            let la := mload(a)
+            let lb := mload(b)
+            r := mload(0x40)
+            mstore(r, la)
+            let rd := add(r, 0x20)
+            let ad := add(a, 0x20)
+            let bd := add(b, 0x20)
+            let borrow := 0
+            let i := 0
+            for { } lt(i, lb) { i := add(i, 1) } {
+                let ai := mload(add(ad, shl(5, i)))
+                let bi := mload(add(bd, shl(5, i)))
+                let d := sub(ai, bi)
+                let b1 := lt(ai, bi)
+                let d2 := sub(d, borrow)
+                mstore(add(rd, shl(5, i)), d2)
+                borrow := or(b1, lt(d, borrow)) // b1 i b2 ne mogu oba biti 1
+            }
+            for { } lt(i, la) { i := add(i, 1) } {
+                let ai := mload(add(ad, shl(5, i)))
+                mstore(add(rd, shl(5, i)), sub(ai, borrow))
+                borrow := lt(ai, borrow)
+            }
+            mstore(0x40, add(rd, shl(5, la)))
+        }
     }
 
     // ----------------------------------------------------------------
@@ -135,9 +245,10 @@ library LibBigInt {
         _trim(z);
     }
 
+    /// @dev OPT NIVO 12: bez kloniranja (videti abs)
     function negate(Int memory a) internal pure returns (Int memory z) {
-        z = clone(a);
-        if (!isZero(z)) z.neg = !z.neg;
+        z.limbs = a.limbs;
+        z.neg = !a.neg && !isZero(a); // kanonicki: nikad "-0"
     }
 
     function sub(Int memory a, Int memory b) internal pure returns (Int memory z) {
@@ -161,7 +272,8 @@ library LibBigInt {
     // multiply (schoolbook with 256x256->512 word products)
     // ----------------------------------------------------------------
 
-    function mul(Int memory a, Int memory b) internal pure returns (Int memory z) {
+    /// @dev referentni skolski mul — cuva se ISKLJUCIVO za diferencijalni fuzz
+    function _mulRef(Int memory a, Int memory b) internal pure returns (Int memory z) {
         uint256 la = a.limbs.length; uint256 lb = b.limbs.length;
         uint256[] memory r = new uint256[](la + lb);
         for (uint256 i = 0; i < la; i++) {
@@ -180,6 +292,51 @@ library LibBigInt {
                 }
             }
             r[i + lb] += carry;
+        }
+        z.neg = a.neg != b.neg;
+        z.limbs = r;
+        _trim(z);
+    }
+
+    /// @dev OPT NIVO 5: skolski mul u asembleru — fullMul preko mulmod(x,y,not(0))
+    ///      trika, bez bounds check-ova; akumulator se nulira calldatacopy trikom.
+    function mul(Int memory a, Int memory b) internal pure returns (Int memory z) {
+        uint256[] memory A = a.limbs;
+        uint256[] memory Bb = b.limbs;
+        uint256[] memory r;
+        assembly {
+            let la := mload(A)
+            let lb := mload(Bb)
+            let n := add(la, lb)
+            r := mload(0x40)
+            mstore(r, n)
+            let rd := add(r, 0x20)
+            calldatacopy(rd, calldatasize(), shl(5, n)) // zero-init akumulatora
+            mstore(0x40, add(rd, shl(5, n)))
+            let ad := add(A, 0x20)
+            let bd := add(Bb, 0x20)
+            for { let i := 0 } lt(i, la) { i := add(i, 1) } {
+                let ai := mload(add(ad, shl(5, i)))
+                if ai {
+                    let carry := 0
+                    let rp := add(rd, shl(5, i))
+                    for { let j := 0 } lt(j, lb) { j := add(j, 1) } {
+                        let bj := mload(add(bd, shl(5, j)))
+                        let lo := mul(ai, bj)
+                        let mm := mulmod(ai, bj, not(0))
+                        let hi := sub(sub(mm, lo), lt(mm, lo))
+                        let pp := add(rp, shl(5, j))
+                        let sum := add(mload(pp), lo)
+                        let c1 := lt(sum, lo)
+                        let s2 := add(sum, carry)
+                        let c2 := lt(s2, sum)
+                        mstore(pp, s2)
+                        carry := add(hi, add(c1, c2))
+                    }
+                    let pp := add(rp, shl(5, lb))
+                    mstore(pp, add(mload(pp), carry))
+                }
+            }
         }
         z.neg = a.neg != b.neg;
         z.limbs = r;
@@ -330,8 +487,14 @@ library LibBigInt {
     }
 
     function _sig(uint256[] memory a) private pure returns (uint256 n) {
-        n = a.length;
-        while (n > 0 && a[n - 1] == 0) n--;
+        assembly {
+            n := mload(a)
+            let d := add(a, 0x20)
+            for { } gt(n, 0) { } {
+                if mload(add(d, shl(5, sub(n, 1)))) { break }
+                n := sub(n, 1)
+            }
+        }
     }
     function _copy(uint256[] memory a, uint256 n) private pure returns (uint256[] memory r) {
         r = new uint256[](n);
@@ -459,8 +622,11 @@ library LibBigInt {
         return a.neg ? -m : m;
     }
 
+    /// @dev OPT NIVO 12: bez kloniranja — novi header, deljeni limbovi.
+    ///      Bezbedno: biblioteka NIKAD ne mutira ulaze (samo _trim, i to na
+    ///      sveze alociranim izlazima operacija).
     function abs(Int memory a) internal pure returns (Int memory z) {
-        z = clone(a); z.neg = false;
+        z.limbs = a.limbs;
     }
 
     /// @dev extended gcd: returns (g, x, y) with a*x + b*y = g >= 0
@@ -529,12 +695,110 @@ library LibBigInt {
 
     /// @dev vrednost >> k, uzeto iz limb niza (little-endian), kao jedna rec
     function _shrWord(uint256[] memory L, uint256 k) private pure returns (uint256 r) {
-        uint256 w = k >> 8;         // k / 256
-        uint256 o = k & 255;
-        uint256 n = L.length;
-        if (w >= n) return 0;
-        r = L[w] >> o;
-        if (o != 0 && w + 1 < n) r |= L[w + 1] << (256 - o);
+        assembly {
+            let w := shr(8, k)
+            let n := mload(L)
+            if lt(w, n) {
+                let o := and(k, 255)
+                let d := add(L, 0x20)
+                r := shr(o, mload(add(d, shl(5, w))))
+                if o {
+                    if lt(add(w, 1), n) {
+                        r := or(r, shl(sub(256, o), mload(add(d, shl(5, add(w, 1))))))
+                    }
+                }
+            }
+        }
+    }
+
+    /// @dev OPT NIVO 6: fuzionisano wa*a - wb*b u jednom asemblerskom prolazu:
+    ///      dva word-mul-a u scratch regione iste duzine + poredjenje + jedno
+    ///      kombinovanje, bez Int medjustruktura, fromUint-a i po-proizvodnih
+    ///      _trim prolaza. Znak: razliciti znaci => sabiranje magnitude (znak a);
+    ///      isti znak => oduzimanje vece magnitude (znak po poretku).
+    function _fms(uint256 wa, Int memory a, uint256 wb, Int memory b)
+        internal pure returns (Int memory z)
+    {
+        uint256[] memory A = a.limbs;
+        uint256[] memory Bl = b.limbs;
+        bool diff = a.neg != b.neg;
+        uint256[] memory r;
+        uint256 ge; // 1 ako je wa*|a| >= wb*|b| (samo za isti znak)
+        assembly {
+            function wmul(w, src, dst, n) {
+                let carry := 0
+                let sd := add(src, 0x20)
+                for { let j := 0 } lt(j, n) { j := add(j, 1) } {
+                    let sv := mload(add(sd, shl(5, j)))
+                    let lo := mul(w, sv)
+                    let mm := mulmod(w, sv, not(0))
+                    let hi := sub(sub(mm, lo), lt(mm, lo))
+                    let sum := add(lo, carry)
+                    mstore(add(dst, shl(5, j)), sum)
+                    carry := add(hi, lt(sum, lo))
+                }
+                mstore(add(dst, shl(5, n)), carry)
+            }
+            let la := mload(A)
+            let lb := mload(Bl)
+            let m := add(la, 1)
+            if lt(la, lb) { m := add(lb, 1) }
+            let fmp := mload(0x40)
+            let pd := fmp                       // scratch P: m reci
+            let qd := add(fmp, shl(5, m))       // scratch Q: m reci
+            calldatacopy(pd, calldatasize(), shl(6, m)) // nula P i Q odjednom
+            wmul(wa, A, pd, la)
+            wmul(wb, Bl, qd, lb)
+            r := add(qd, shl(5, m))             // rezultat: m+1 reci
+            mstore(r, add(m, 1))
+            let rd := add(r, 0x20)
+            mstore(0x40, add(rd, shl(5, add(m, 1))))
+            switch diff
+            case 1 {
+                // razliciti znaci: R = P + Q
+                let carry := 0
+                for { let i := 0 } lt(i, m) { i := add(i, 1) } {
+                    let av := mload(add(pd, shl(5, i)))
+                    let sum := add(av, mload(add(qd, shl(5, i))))
+                    let c1 := lt(sum, av)
+                    let s2 := add(sum, carry)
+                    mstore(add(rd, shl(5, i)), s2)
+                    carry := or(c1, lt(s2, sum))
+                }
+                mstore(add(rd, shl(5, m)), carry)
+                ge := 1
+            }
+            default {
+                // isti znak: poredi pa oduzmi vecu - manju
+                ge := 1
+                for { let i := m } gt(i, 0) { i := sub(i, 1) } {
+                    let av := mload(add(pd, shl(5, sub(i, 1))))
+                    let bv := mload(add(qd, shl(5, sub(i, 1))))
+                    if iszero(eq(av, bv)) {
+                        ge := gt(av, bv)
+                        break
+                    }
+                }
+                let xd := pd
+                let yd := qd
+                if iszero(ge) { xd := qd yd := pd }
+                let borrow := 0
+                for { let i := 0 } lt(i, m) { i := add(i, 1) } {
+                    let av := mload(add(xd, shl(5, i)))
+                    let bv := mload(add(yd, shl(5, i)))
+                    let d := sub(av, bv)
+                    let b1 := lt(av, bv)
+                    let d2 := sub(d, borrow)
+                    mstore(add(rd, shl(5, i)), d2)
+                    borrow := or(b1, lt(d, borrow))
+                }
+                mstore(add(rd, shl(5, m)), 0)
+            }
+        }
+        // znak: razliciti znaci -> znak a; isti znak -> znak a ako P>=Q, inace suprotan
+        z.neg = diff ? a.neg : (ge == 1 ? a.neg : !a.neg);
+        z.limbs = r;
+        _trim(z);
     }
 
     /// @dev primena matrice [[±Am,∓Bm],[∓Cm,±Dm]] (znaci po parnosti) na par
@@ -542,12 +806,8 @@ library LibBigInt {
         Int memory p, Int memory q,
         uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool even
     ) private pure returns (Int memory, Int memory) {
-        Int memory ap = mul(fromUint(Am), p);
-        Int memory bq = mul(fromUint(Bm), q);
-        Int memory cp = mul(fromUint(Cm), p);
-        Int memory dq = mul(fromUint(Dm), q);
-        if (even) return (sub(ap, bq), sub(dq, cp));
-        return (sub(bq, ap), sub(cp, dq));
+        if (even) return (_fms(Am, p, Bm, q), _fms(Dm, q, Cm, p));
+        return (_fms(Bm, q, Am, p), _fms(Cm, p, Dm, q));
     }
 
     /// @dev sertifikovana petlja nad gornjim recima; vraca akumuliranu matricu
@@ -557,6 +817,7 @@ library LibBigInt {
     {
         Am = 1; Dm = 1; even = true;
         // BOUND <= 2^126: clanovi < BOUND => nijedan medjuracun ne prekoracuje
+        unchecked { // OPT NIVO 11: granice dokazane — bez checked overhead-a
         while (true) {
             uint256 q1;
             uint256 q2;
@@ -583,6 +844,7 @@ library LibBigInt {
             (u, v) = (v, u - q1 * v);
             progressed = true;
         }
+        } // unchecked
     }
 
     /// @dev zavrsnica kada oba operanda stanu u jednu rec: egzaktan Euklid u
@@ -593,6 +855,7 @@ library LibBigInt {
     {
         uint256 Am = 1; uint256 Bm = 0; uint256 Cm = 0; uint256 Dm = 1;
         bool even = true;
+        unchecked { // OPT NIVO 11: overflow strazari vec cuvaju nC/nD; q = floor(u/v)
         while (v != 0) {
             uint256 q = u / v;
             bool overflow =
@@ -610,8 +873,188 @@ library LibBigInt {
             even = !even;
             (u, v) = (v, u - q * v);
         }
+        } // unchecked
         (s0, s1) = _applyM(s0, s1, Am, Bm, Cm, Dm, even);
         return (fromUint(u), s0);
+    }
+
+    // ---------------- OPT NIVO 13: stack-Lehmer za <=2-limb operande ----------------
+    // Ceo half-xgcd u registrima: vrednosti kao (lo,hi) parovi, kofaktori kao
+    // MAGNITUDE sa znakom iz alternacije (aditivna rekurencija — nema
+    // ponistavanja: |s'| = Am|s0| + Bm|s1|). Redak necertifikovani korak
+    // boksuje u Int i koristi genericki put.
+
+    function _mul21(uint256 w, uint256 lo, uint256 hi)
+        private pure returns (uint256 p0, uint256 p1, uint256 p2)
+    {
+        unchecked {
+            (uint256 h1, uint256 l1) = _mul(w, lo);
+            (uint256 h2, uint256 l2) = _mul(w, hi);
+            p0 = l1;
+            p1 = h1 + l2;
+            p2 = h2 + (p1 < h1 ? 1 : 0);
+        }
+    }
+
+    /// @dev (a3 - b3) za 3-word nenegativne; require rezultat staje u 2 reci
+    function _sub32(uint256 a0, uint256 a1, uint256 a2, uint256 b0, uint256 b1, uint256 b2)
+        private pure returns (uint256 r0, uint256 r1)
+    {
+        unchecked {
+            r0 = a0 - b0;
+            uint256 br = a0 < b0 ? 1 : 0;
+            r1 = a1 - b1 - br;
+            br = (a1 < b1 || (a1 == b1 && br == 1)) ? 1 : 0;
+            require(a2 - b2 - br == 0, "l2 top"); // teorija: pravi ostatak < 2^512
+        }
+    }
+
+    function _add32(uint256 a0, uint256 a1, uint256 a2, uint256 b0, uint256 b1, uint256 b2)
+        private pure returns (uint256 r0, uint256 r1)
+    {
+        unchecked {
+            r0 = a0 + b0;
+            uint256 c = r0 < a0 ? 1 : 0;
+            r1 = a1 + b1 + c;
+            c = (r1 < a1 || (r1 == a1 && c == 1)) ? 1 : 0;
+            require(a2 + b2 + c == 0, "l2 cof"); // |s| <= modul < 2^512
+        }
+    }
+
+    /// @dev primeni (Am..Dm, be) ADITIVNO na kofaktorske magnitude + parnost;
+    ///      cof = [m0l, m0h, m1l, m1h, sn] — mutira se u mestu
+    function _flush2(uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool be, uint256[5] memory cof)
+        private pure
+    {
+        (uint256 a0, uint256 a1, uint256 a2) = _mul21(Am, cof[0], cof[1]);
+        (uint256 b0, uint256 b1, uint256 b2) = _mul21(Bm, cof[2], cof[3]);
+        (uint256 n0l, uint256 n0h) = _add32(a0, a1, a2, b0, b1, b2);
+        (a0, a1, a2) = _mul21(Cm, cof[0], cof[1]);
+        (b0, b1, b2) = _mul21(Dm, cof[2], cof[3]);
+        (uint256 n1l, uint256 n1h) = _add32(a0, a1, a2, b0, b1, b2);
+        cof[0] = n0l; cof[1] = n0h; cof[2] = n1l; cof[3] = n1h;
+        if (!be) cof[4] ^= 1;
+    }
+
+    /// @dev w1*v1 - w2*v2 nad 2-word vrednostima (rezultat staje u 2 reci)
+    function _applyVal2(uint256 w1, uint256 v1l, uint256 v1h, uint256 w2, uint256 v2l, uint256 v2h)
+        private pure returns (uint256, uint256)
+    {
+        (uint256 a0, uint256 a1, uint256 a2) = _mul21(w1, v1l, v1h);
+        (uint256 b0, uint256 b1, uint256 b2) = _mul21(w2, v2l, v2h);
+        return _sub32(a0, a1, a2, b0, b1, b2);
+    }
+
+    function _applyBatch2(
+        uint256 x0, uint256 x1, uint256 y0, uint256 y1,
+        uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool be,
+        uint256[5] memory cof
+    ) private pure returns (uint256, uint256, uint256, uint256) {
+        uint256 nx0;
+        uint256 nx1;
+        if (be) {
+            (nx0, nx1) = _applyVal2(Am, x0, x1, Bm, y0, y1);
+            (y0, y1) = _applyVal2(Dm, y0, y1, Cm, x0, x1);
+        } else {
+            (nx0, nx1) = _applyVal2(Bm, y0, y1, Am, x0, x1);
+            (y0, y1) = _applyVal2(Cm, x0, x1, Dm, y0, y1);
+        }
+        _flush2(Am, Bm, Cm, Dm, be, cof);
+        return (nx0, nx1, y0, y1);
+    }
+
+    function _xgcdHalf2(uint256 x0, uint256 x1, uint256 y0, uint256 y1)
+        private pure
+        returns (uint256, uint256, uint256, uint256, bool)
+    {
+        uint256[5] memory cof;
+        cof[0] = 1; // m0 = 1, m1 = 0, sn = 0
+        uint256 guard;
+        while (y0 | y1 != 0) {
+            require(++guard < 4096, "l2 runaway");
+            if (x1 < y1 || (x1 == y1 && x0 < y0)) {
+                (x0, y0) = (y0, x0);
+                (x1, y1) = (y1, x1);
+                (cof[0], cof[2]) = (cof[2], cof[0]);
+                (cof[1], cof[3]) = (cof[3], cof[1]);
+                cof[4] ^= 1;
+                if (y0 | y1 == 0) break; // a == 0 na ulazu
+            }
+            if (x1 == 0) {
+                uint256 Am = 1; uint256 Bm = 0; uint256 Cm = 0; uint256 Dm = 1;
+                bool be = true;
+                unchecked {
+                    while (y0 != 0) {
+                        uint256 q = x0 / y0;
+                        if (
+                            (Cm != 0 && q > (type(uint256).max - Am) / Cm) ||
+                            (Dm != 0 && q > (type(uint256).max - Bm) / Dm)
+                        ) {
+                            _flush2(Am, Bm, Cm, Dm, be, cof);
+                            Am = 1; Bm = 0; Cm = 0; Dm = 1; be = true;
+                            continue;
+                        }
+                        uint256 nC = Am + q * Cm;
+                        uint256 nD = Bm + q * Dm;
+                        (Am, Bm) = (Cm, Dm);
+                        (Cm, Dm) = (nC, nD);
+                        be = !be;
+                        (x0, y0) = (y0, x0 - q * y0);
+                    }
+                }
+                _flush2(Am, Bm, Cm, Dm, be, cof);
+                y1 = 0;
+                break;
+            }
+            uint256 u;
+            uint256 v;
+            unchecked {
+                uint256 k = 512 - _clz(x1) - 255; // x1 != 0 => bl in (256,512]
+                if (k < 256) {
+                    u = (x1 << (256 - k)) | (x0 >> k);
+                    v = (y1 << (256 - k)) | (y0 >> k);
+                } else {
+                    u = x1 >> (k - 256);
+                    v = y1 >> (k - 256);
+                }
+            }
+            (uint256 Am2, uint256 Bm2, uint256 Cm2, uint256 Dm2, bool be2, bool ok) =
+                _certifiedLoop(u, v, 1 << 126);
+            if (!ok) {
+                (x0, x1, y0, y1) = _fallback2(x0, x1, y0, y1, cof);
+                continue;
+            }
+            (x0, x1, y0, y1) = _applyBatch2(x0, x1, y0, y1, Am2, Bm2, Cm2, Dm2, be2, cof);
+        }
+        return (x0, x1, cof[0], cof[1], cof[4] == 1);
+    }
+
+
+    /// @dev redak necertifikovani korak: boksuj, pun divmodFast, azuriraj
+    ///      magnitude aditivno (|s_new| = m0 + q*m1, znak = znak starog s0)
+    function _fallback2(uint256 x0, uint256 x1, uint256 y0, uint256 y1, uint256[5] memory cof)
+        private pure returns (uint256, uint256, uint256, uint256)
+    {
+        (Int memory q, Int memory rem) = divmodFast(_box2(x0, x1), _box2(y0, y1));
+        Int memory nm = add(_box2(cof[0], cof[1]), mul(q, _box2(cof[2], cof[3])));
+        require(_sig(rem.limbs) <= 2 && _sig(nm.limbs) <= 2, "l2 fb");
+        (cof[0], cof[1]) = (cof[2], cof[3]);
+        cof[2] = nm.limbs.length > 0 ? nm.limbs[0] : 0;
+        cof[3] = nm.limbs.length > 1 ? nm.limbs[1] : 0;
+        cof[4] ^= 1;
+        return (
+            y0, y1,
+            rem.limbs.length > 0 ? rem.limbs[0] : 0,
+            rem.limbs.length > 1 ? rem.limbs[1] : 0
+        );
+    }
+
+    function _box2(uint256 lo, uint256 hi) private pure returns (Int memory z) {
+        uint256[] memory L = new uint256[](2);
+        L[0] = lo;
+        L[1] = hi;
+        z.limbs = L;
+        _trim(z);
     }
 
     /// @dev OPT NIVO 2: half-extended gcd preko Lehmer-a — vraca (g, x) sa
@@ -619,6 +1062,21 @@ library LibBigInt {
     function xgcdHalf(Int memory a, Int memory b)
         internal pure returns (Int memory, Int memory)
     {
+        {
+            // OPT NIVO 13: stack staza za <=2-limb operande (svi vruci pozivi)
+            uint256 sx_ = _sig(a.limbs);
+            uint256 sy_ = _sig(b.limbs);
+            if (sx_ <= 2 && sy_ <= 2) {
+                (uint256 gg0, uint256 gg1, uint256 ssl, uint256 ssh, bool ssn) = _xgcdHalf2(
+                    sx_ > 0 ? a.limbs[0] : 0, sx_ > 1 ? a.limbs[1] : 0,
+                    sy_ > 0 ? b.limbs[0] : 0, sy_ > 1 ? b.limbs[1] : 0
+                );
+                Int memory gOut = _box2(gg0, gg1);
+                Int memory xOut = _box2(ssl, ssh);
+                xOut.neg = (ssn != a.neg) && !isZero(xOut);
+                return (gOut, xOut);
+            }
+        }
         Int memory x = abs(a);
         Int memory y = abs(b);
         Int memory s0 = fromUint(1);
@@ -722,13 +1180,13 @@ library LibBigInt {
             uint256 sb = _sig(b.limbs);
             uint256 bla = (sa - 1) * 256 + (256 - _clz(a.limbs[sa - 1]));
             blb = (sb - 1) * 256 + (256 - _clz(b.limbs[sb - 1]));
-            if (bla > blb + 200) return divmod(a, b); // kvocijent ne staje u procenu
+            if (bla > blb + 253) return divmod(a, b); // hi < bt vazi do blb+254; est greska < 2 do 2^253
         }
         uint256 k = blb > 255 ? blb - 255 : 0;
         (uint256 hi, uint256 lo) = _shrWord2(a.limbs, k);
         (uint256 est, ) = _div512by256(hi, lo, _shrWord(b.limbs, k));
         Int memory absB = abs(b);
-        Int memory rem = sub(abs(a), mul(fromUint(est), absB));
+        Int memory rem = _fms(1, abs(a), est, absB); // |a| - est*|b| u jednom prolazu
         uint256 fix;
         while (rem.neg) { require(++fix < 4, "est off"); est--; rem = add(rem, absB); }
         while (_ucmp(rem.limbs, absB.limbs) >= 0) { require(++fix < 4, "est off"); est++; rem = sub(rem, absB); }
@@ -775,10 +1233,77 @@ library LibBigInt {
         return _certifiedLoop(_shrWord(rP.limbs, k), _shrWord(rC.limbs, k), bound);
     }
 
+    function _bl2(uint256 lo, uint256 hi) private pure returns (uint256) {
+        if (hi != 0) return 512 - _clz(hi);
+        if (lo != 0) return 256 - _clz(lo);
+        return 0;
+    }
+
+    /// @dev OPT NIVO 15: stack xgcdPartial za <=2-limb (a, mu). Bez swap-ova
+    ///      (invarijanta rP > rC), kofaktori krecu od (0, 1); ista aditivna
+    ///      magnitude+parnost masinerija kao _xgcdHalf2.
+    function _xgcdPartial2(uint256 x0, uint256 x1, uint256 y0, uint256 y1, uint256 stopBits)
+        private pure
+        returns (uint256, uint256, uint256, uint256, uint256[5] memory cof)
+    {
+        cof[2] = 1; // m0(beta_{k-1}) = 0, m1(beta_k) = 1, parnost k u cof[4]
+        uint256 guard;
+        while ((y0 | y1) != 0 && _bl2(y0, y1) > stopBits) {
+            require(++guard < 4096, "p2 runaway");
+            if (x1 == 0) {
+                // stopBits < 256 (manji D): retko — pojedinacni boksovani koraci
+                (x0, x1, y0, y1) = _fallback2(x0, x1, y0, y1, cof);
+                continue;
+            }
+            uint256 u;
+            uint256 v;
+            uint256 bound;
+            unchecked {
+                uint256 k = 512 - _clz(x1) - 255;
+                if (k < 256) {
+                    u = (x1 << (256 - k)) | (x0 >> k);
+                    v = (y1 << (256 - k)) | (y0 >> k);
+                } else {
+                    u = x1 >> (k - 256);
+                    v = y1 >> (k - 256);
+                }
+                uint256 gap = _bl2(y0, y1) - stopBits;
+                bound = gap >= 124 ? (1 << 126) : (uint256(1) << (gap + 2));
+            }
+            (uint256 Am, uint256 Bm, uint256 Cm, uint256 Dm, bool be, bool ok) =
+                _certifiedLoop(u, v, bound);
+            if (!ok) {
+                (x0, x1, y0, y1) = _fallback2(x0, x1, y0, y1, cof);
+                continue;
+            }
+            (x0, x1, y0, y1) = _applyBatch2(x0, x1, y0, y1, Am, Bm, Cm, Dm, be, cof);
+        }
+        return (x0, x1, y0, y1, cof);
+    }
+
     function xgcdPartial(Int memory a, Int memory mu, uint256 stopBits)
         internal pure
         returns (Int memory rP, Int memory rC, Int memory bP, Int memory bC, bool evenTot)
     {
+        if (_sig(a.limbs) <= 2) {
+            // OPT NIVO 15: stack staza (mu < a => i mu staje u 2 reci)
+            uint256 sa_ = _sig(a.limbs);
+            uint256 sm_ = _sig(mu.limbs);
+            (uint256 p0, uint256 p1, uint256 c0, uint256 c1, uint256[5] memory cf) = _xgcdPartial2(
+                sa_ > 0 ? a.limbs[0] : 0, sa_ > 1 ? a.limbs[1] : 0,
+                sm_ > 0 ? mu.limbs[0] : 0, sm_ > 1 ? mu.limbs[1] : 0,
+                stopBits
+            );
+            rP = _box2(p0, p1);
+            rC = _box2(c0, c1);
+            bP = _box2(cf[0], cf[1]);
+            bC = _box2(cf[2], cf[3]);
+            evenTot = cf[4] == 0;
+            // znaci: sign(beta_k) = (-1)^k ; sign(beta_{k-1}) suprotan
+            bC.neg = !evenTot && !isZero(bC);
+            bP.neg = evenTot && !isZero(bP);
+            return (rP, rC, bP, bC, evenTot);
+        }
         rP = clone(a);
         rC = clone(mu);
         bP = fromUint(0);
